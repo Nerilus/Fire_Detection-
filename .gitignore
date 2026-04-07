@@ -29,4 +29,4 @@ training_logs/
 SavedModel/
 
 # Local datasets or large generated files
-# fire_dataset/
+fire_dataset/
