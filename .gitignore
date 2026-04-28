@@ -5,6 +5,8 @@ __pycache__/
 
 # Jupyter
 .ipynb_checkpoints/
+# Les outputs du notebook doivent etre vides avant commit (Kernel > Clear All Outputs)
+# Pour automatiser : pip install nbstripout && nbstripout --install
 
 # Virtual environments
 .venv/
@@ -28,5 +30,18 @@ training_logs/
 *.keras
 SavedModel/
 
-# Local datasets or large generated files
+# Dataset (trop volumineux pour git — heberger sur Drive, HuggingFace Datasets ou DVC)
 fire_dataset/
+
+# Fichiers generes automatiquement
+diagnostic_complet.png
+*.png
+# Exception : garder les images du README si besoin
+# !docs/images/*.png
+
+# Rapport de rendu (a versionner manuellement si souhaite)
+# RAPPORT.md
+
+# Fichiers temporaires
+tmp_*.txt
+*.tmp
