@@ -1,97 +1,112 @@
-# Fire Classification - Vision AI (TensorFlow)
+# Fire Detection — Vision IA (TensorFlow / MobileNetV2)
 
-Projet de classification d'images avec TensorFlow/Keras pour distinguer deux classes: feu et non-feu.
-
-Pipeline: `fire.ipynb` — MobileNetV2 en transfer learning, sortie binaire `Dense(1, sigmoid)`, gestion du desequilibre via `class_weight`, augmentation dans le generateur d'entrainement.
+Classification d'images feu / non-feu par transfer learning.
+Accuracy test : **99 %** — Recall feu : **100 %** (0 faux négatif sur 200 images de test).
 
 ## Structure du projet
 
 ```text
 Fire_Detection-/
-  fire.ipynb
-  helper_functions.py
-  requirements.txt
+  fire.ipynb            # pipeline complet : données → entraînement → évaluation
+  app.py                # serveur Flask : API /predict + Grad-CAM
+  helper_functions.py   # utilitaires : courbes, matrice de confusion, métriques
+  requirements.txt      # dépendances avec versions fixées
+  presentation.html     # présentation interactive 30 slides (16:9)
+  RAPPORT.md            # rapport technique complet
+  templates/
+    index.html          # interface web drag-and-drop
   fire_dataset/
-    fire_images/
-    non_fire_images/
-  mobilenet_v2.weights.h5
-  fire_model.keras
-  training_logs/
+    fire_images/        # 755 images de feu
+    non_fire_images/    # 244 images sans feu
+  mobilenet_v2.weights.h5   # meilleurs poids (EarlyStopping)
+  fire_model.keras          # modèle complet sauvegardé
+  training_logs/            # logs TensorBoard
 ```
 
-Description rapide:
-- `fire.ipynb`: preparation des donnees, entrainement, evaluation et visualisations
-- `helper_functions.py`: fonctions utilitaires pour les images, les courbes et la matrice de confusion
-- `requirements.txt`: dependances Python avec versions exactes
-- `fire_dataset/`: dataset local utilise par le notebook
-- `mobilenet_v2.weights.h5`: meilleurs poids sauvegardes pendant l'entrainement
-- `fire_model.keras`: modele complet sauvegarde apres entrainement
-- `training_logs/`: logs TensorBoard
+## Modèle
 
-## Objectif
+**Architecture** : MobileNetV2 pré-entraîné (ImageNet) + tête Dense(256, ReLU) + Dropout(0.2) + Dense(1, sigmoid)
 
-Détecter la présence de feu sur une image et mesurer les performances du modèle sur un jeu de test local. Le projet peut évoluer vers de l'inférence sur flux vidéo.
+| Composant | Paramètres | Statut |
+|-----------|-----------|--------|
+| MobileNetV2 backbone | 2 334 720 | Gelés |
+| Tête de classification | 208 897 | Entraînés |
+| **Total** | **2 543 617** | |
 
-## Prerequis
+**Pipeline entraînement** : class weighting (fire=0.44 / non\_fire=1.37), augmentation à la volée (rotation ±20°, flip, zoom ±10 %), EarlyStopping patience=5, ModelCheckpoint sur val\_loss.
 
-- Windows, Linux ou macOS
+**Résultats test (200 images)** :
+
+| Métrique | Valeur |
+|----------|--------|
+| Accuracy | 99 % |
+| Recall feu | 100 % |
+| Faux négatifs | 0 |
+| Fausses alarmes | 2 |
+
+## Application web (Flask)
+
+Le modèle est exposé via un serveur Flask avec interface drag-and-drop.
+
+```bash
+python app.py
+# → http://localhost:5000
+```
+
+**Fonctionnalités** :
+- Upload par glisser-déposer ou clic
+- Prédiction en temps réel (< 1 s) avec score de confiance
+- Visualisation **Grad-CAM** interactive (heatmap des zones décisives)
+- Réponse JSON : `is_fire`, `confidence`, `raw_score`, `gradcam_data`
+
+**Routes** :
+- `GET /` — interface HTML
+- `POST /predict` — reçoit une image, retourne JSON + Grad-CAM base64
+
+## Présentation interactive
+
+`presentation.html` — 30 slides 16:9, ouvrir directement dans un navigateur.
+
+Navigation : flèches clavier ou boutons. Toggle **Détails / Présentation** (haut gauche) pour basculer entre la vue technique complète et un résumé simplifié.
+
+Contenu :
+- Slides 1–14 : projet, CNN, transfer learning, architecture, dataset, entraînement, résultats, erreurs, Grad-CAM, app web, améliorations, conclusion
+- Slide 15 : séparateur fiches techniques
+- Slides 16–26 : TensorFlow, Keras, MobileNetV2, ImageNet, NumPy/Pandas, Matplotlib/scikit-learn, Pillow, Flask, Grad-CAM mathématiques, TFLite/Edge, LoRaWAN/5G/Starlink
+- Slides 27–30 : concurrents mondiaux (ForestWatch AU, Saskatchewan CA, FireLoc US) + tableau comparatif
+
+## Prérequis
+
 - Python 3.10+
-- Jupyter Notebook ou VS Code avec l'extension Jupyter
-- GPU optionnel pour accelerer l'entrainement
+- GPU optionnel (CPU suffisant pour l'inférence)
 
 ## Installation
 
 ```bash
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+.\.venv\Scripts\Activate.ps1   # Windows PowerShell
+# ou : source .venv/bin/activate   (Linux / macOS)
+
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-Puis lancer Jupyter:
+## Entraînement (notebook)
 
 ```bash
-jupyter notebook
+jupyter notebook fire.ipynb
 ```
 
-## Dataset attendu
+1. Vérifier que `dataset` pointe vers `./fire_dataset`
+2. Exécuter les cellules dans l'ordre
+3. Phase 2 (fine-tuning, optionnel) : dégèle les 30 derniers layers de MobileNetV2 avec lr=1e-5
 
-Le notebook lit toutes les images presentes dans `fire_dataset/` et prend le nom du dossier parent comme label.
+## Sorties générées
 
-Structure attendue:
-
-```text
-fire_dataset/
-  fire_images/
-    image_001.png
-    image_002.png
-  non_fire_images/
-    image_001.png
-    image_002.png
-```
-
-Le code utilise un split train/test puis un sous-split validation sur le train.
-Le desequilibre entre les classes (755 feu vs 244 non-feu) est compense automatiquement via `class_weight`.
-
-## Execution
-
-1. Ouvrir `fire.ipynb`.
-2. Verifier que la variable `dataset` pointe vers `./fire_dataset` ou vers ton chemin local.
-3. Executer les cellules dans l'ordre.
-4. L'`EarlyStopping` arrete l'entrainement si la validation ne s'ameliore plus pendant 5 epochs.
-5. La cellule de fine-tuning (Phase 2) peut etre executee apres convergence pour gagner 1-3 % supplementaires.
-
-## Sorties generees
-
-- Courbes d'apprentissage loss et accuracy (phases 1 et 2)
-- Evaluation sur le jeu de test
-- `classification_report` et metriques F1/precision/recall
-- Matrice de confusion annotee
-- Poids sauvegardes dans `mobilenet_v2.weights.h5`
-- Modele complet dans `fire_model.keras`
-- Logs TensorBoard dans `training_logs/`
-
-Pour visualiser TensorBoard:
+- `fire_model.keras` — modèle complet
+- `mobilenet_v2.weights.h5` — meilleurs poids
+- `training_logs/` — courbes TensorBoard
+- Matrice de confusion + `classification_report` dans le notebook
 
 ```bash
 tensorboard --logdir training_logs
@@ -99,12 +114,6 @@ tensorboard --logdir training_logs
 
 ## Bonnes pratiques
 
-- Conserver un split train/val/test stable pour comparer les essais (`random_state=42`, `tf.random.set_seed(42)`).
-- Ne pas mélanger train et test — le split est effectué avant la création des générateurs.
-- Surveiller precision, rappel et F1, pas seulement l'accuracy.
-- Vider les sorties du notebook (`Kernel > Clear All Outputs`) avant chaque commit git.
-
-## Notes
-
-- `helper_functions.py` contient des fonctions utilitaires reutilisables: `make_confusion_matrix`, `calculate_results`, `plot_loss_curves`, `compare_historys`, `pred_and_plot`, etc.
-- Le projet utilise une sortie sigmoide binaire (`Dense(1, sigmoid)`) plutot que softmax a 2 classes, ce qui est plus adapte et plus leger pour la classification binaire.
+- Split train/val/test fixé avant tout traitement (`random_state=42`) — intersection train ∩ test = 0
+- Vider les sorties du notebook avant chaque commit (`Kernel > Clear All Outputs`)
+- Surveiller recall et F1, pas seulement l'accuracy — un faux négatif (feu manqué) est critique
