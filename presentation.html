@@ -1,0 +1,1803 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Detection d'Incendie par IA</title>
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --fire:  #ff5722;
+  --fire2: #ffd600;
+  --safe:  #00e676;
+  --bg:    #09090f;
+  --surf:  rgba(255,255,255,.045);
+  --bord:  rgba(255,255,255,.09);
+  --txt:   #ececec;
+  --mute:  #666;
+}
+
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: #000;
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+}
+
+/* ── 16:9 FIXED CANVAS ─────────────────────────────────── */
+#stage {
+  width: 1280px; height: 720px;
+  background: var(--bg);
+  position: relative;
+  overflow: hidden;
+  /* scaled by JS to fit viewport */
+  transform-origin: center center;
+}
+
+/* subtle top glow per slide */
+#stage::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; height: 320px;
+  background: radial-gradient(ellipse 70% 60% at 50% -5%,
+    rgba(255,87,34,.07) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+/* ── SLIDES ─────────────────────────────────────────────── */
+.slide {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  padding: 52px 72px;
+  opacity: 0;
+  transform: translateX(55px);
+  transition: opacity .38s ease, transform .38s ease;
+  pointer-events: none;
+}
+.slide.active  { opacity: 1; transform: none; pointer-events: auto; }
+.slide.exiting { opacity: 0; transform: translateX(-55px); transition-duration: .28s; }
+
+/* ── TYPOGRAPHY ─────────────────────────────────────────── */
+.chip {
+  display: inline-block;
+  border: 1px solid var(--fire);
+  color: var(--fire);
+  border-radius: 50px;
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  padding: 4px 14px;
+  margin-bottom: 18px;
+}
+.chip.g { border-color: var(--safe); color: var(--safe); }
+.chip.b { border-color: #42a5f5;    color: #42a5f5; }
+
+h1 {
+  font-size: 56px; font-weight: 900;
+  letter-spacing: -2px; line-height: 1.05;
+  background: linear-gradient(120deg, #ff9040, #ff5722, #ffd600);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-bottom: 18px; text-align: center;
+}
+h2 {
+  font-size: 36px; font-weight: 800;
+  letter-spacing: -.8px; line-height: 1.1;
+  color: var(--txt);
+  margin-bottom: 28px; text-align: center;
+}
+h2 em   { font-style: normal; color: var(--fire); }
+h2 em.g { color: var(--safe); }
+h2 em.b { color: #42a5f5; }
+
+.sub {
+  font-size: 18px; color: var(--mute);
+  line-height: 1.6; text-align: center;
+  max-width: 680px; margin-bottom: 28px;
+}
+
+/* ── LAYOUT ─────────────────────────────────────────────── */
+.row  { display: flex; gap: 20px; width: 100%; }
+.col  { display: flex; flex-direction: column; gap: 16px; flex: 1; }
+
+/* ── CARDS ──────────────────────────────────────────────── */
+.card {
+  background: var(--surf);
+  border: 1px solid var(--bord);
+  border-radius: 12px;
+  padding: 20px 24px;
+}
+.card.fire { border-color: rgba(255,87,34,.35); }
+.card.safe { border-color: rgba(0,230,118,.3); }
+.card.blue { border-color: rgba(66,165,245,.3); }
+
+.card h3 { font-size: 15px; font-weight: 700; margin-bottom: 10px; color: var(--txt); }
+.card p  { font-size: 14px; color: #aaa; line-height: 1.65; }
+.card code { font-size: 13px; color: #ff9040; background: rgba(255,144,64,.1); padding: 1px 6px; border-radius: 4px; }
+
+/* stat card */
+.stat {
+  background: var(--surf);
+  border: 1px solid var(--bord);
+  border-radius: 12px;
+  padding: 22px 26px;
+  display: flex; flex-direction: column; gap: 4px;
+  flex: 1;
+}
+.stat-label { font-size: 11px; letter-spacing: 1.4px; text-transform: uppercase; color: var(--mute); }
+.stat-val   { font-size: 52px; font-weight: 900; line-height: 1; color: var(--fire); }
+.stat-val.g { color: var(--safe); }
+.stat-val.b { color: #42a5f5; }
+.stat-sub   { font-size: 13px; color: var(--mute); margin-top: 2px; }
+
+/* ── ARCH BOX ───────────────────────────────────────────── */
+.arch {
+  display: flex; flex-direction: column; align-items: center; gap: 0;
+}
+.arch-box {
+  border-radius: 8px;
+  padding: 10px 28px;
+  font-size: 15px; font-weight: 600;
+  text-align: center; min-width: 280px;
+}
+.arch-arrow {
+  font-size: 18px; color: var(--mute);
+  line-height: 1; padding: 2px 0;
+}
+.arch-sub { font-size: 12px; color: var(--mute); margin-top: 2px; }
+.afire { background: rgba(255,87,34,.12); border: 1px solid rgba(255,87,34,.35); color: #ff7043; }
+.asoft { background: rgba(255,214,0,.1);  border: 1px solid rgba(255,214,0,.3);  color: #ffd600; }
+.asafe { background: rgba(0,230,118,.1);  border: 1px solid rgba(0,230,118,.3);  color: var(--safe); }
+.ablue { background: rgba(66,165,245,.1); border: 1px solid rgba(66,165,245,.3); color: #42a5f5; }
+.agray { background: var(--surf);         border: 1px solid var(--bord);          color: #ccc; }
+
+/* ── PROGRESS BAR ───────────────────────────────────────── */
+.bar-row   { display: flex; align-items: center; gap: 12px; margin: 5px 0; }
+.bar-lbl   { width: 110px; font-size: 13px; color: #aaa; flex-shrink: 0; }
+.bar-track { flex: 1; height: 8px; background: rgba(255,255,255,.07); border-radius: 4px; overflow: hidden; }
+.bar-fill  { height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--fire), var(--fire2)); }
+.bar-fill.g{ background: linear-gradient(90deg, var(--safe), #69f0ae); }
+.bar-val   { width: 42px; text-align: right; font-size: 13px; font-weight: 700; color: var(--txt); }
+
+/* ── CONFUSION MATRIX ───────────────────────────────────── */
+.cm { display: grid; grid-template-columns: 90px 1fr 1fr; gap: 5px; }
+.cmh { display: flex; align-items: center; justify-content: center;
+       font-size: 12px; color: var(--mute); padding: 6px; }
+.cmc { display: flex; flex-direction: column; align-items: center; justify-content: center;
+       border-radius: 8px; padding: 14px 8px; border: 1px solid var(--bord); }
+.cmc .cv { font-size: 28px; font-weight: 800; }
+.cmc .cl { font-size: 11px; color: var(--mute); margin-top: 2px; }
+.tp { background: rgba(0,230,118,.12); border-color: rgba(0,230,118,.35); }
+.tp .cv { color: var(--safe); }
+.fp { background: rgba(255,87,34,.1);  border-color: rgba(255,87,34,.3); }
+.fp .cv { color: var(--fire); }
+.fn { background: rgba(255,255,255,.03); }
+.fn .cv { color: #777; }
+.tn { background: rgba(0,230,118,.05); }
+.tn .cv { color: #aaa; }
+
+/* ── TAG PILL ───────────────────────────────────────────── */
+.tags { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+.tag {
+  padding: 4px 11px; border-radius: 50px;
+  font-size: 12px; border: 1px solid var(--bord); color: var(--mute);
+}
+.tag.fire { border-color: rgba(255,87,34,.4); color: #ff7043; }
+.tag.safe { border-color: rgba(0,230,118,.35); color: var(--safe); }
+
+/* ── STEP LIST ──────────────────────────────────────────── */
+.steps { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+.step  {
+  display: flex; align-items: flex-start; gap: 14px;
+  background: var(--surf); border: 1px solid var(--bord);
+  border-radius: 10px; padding: 14px 18px;
+}
+.step-num {
+  width: 28px; height: 28px; border-radius: 50%;
+  background: rgba(255,87,34,.15); border: 1px solid rgba(255,87,34,.4);
+  color: var(--fire); font-size: 13px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; margin-top: 1px;
+}
+.step-body h4 { font-size: 14px; font-weight: 700; margin-bottom: 3px; }
+.step-body p  { font-size: 13px; color: #999; line-height: 1.5; }
+
+/* ── NAV ────────────────────────────────────────────────── */
+.nav {
+  position: absolute; bottom: 22px; left: 0; right: 0;
+  display: flex; align-items: center; justify-content: center; gap: 14px;
+  z-index: 50;
+}
+.nbtn {
+  width: 36px; height: 36px; border-radius: 50%;
+  border: 1px solid var(--bord);
+  background: rgba(9,9,15,.8); color: var(--mute);
+  font-size: 14px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: border-color .2s, color .2s;
+}
+.nbtn:hover { border-color: var(--fire); color: var(--fire); }
+.dots { display: flex; gap: 6px; align-items: center; }
+.dot  { width: 6px; height: 6px; border-radius: 50%;
+        background: var(--bord); cursor: pointer;
+        transition: background .25s, transform .25s; }
+.dot.on { background: var(--fire); transform: scale(1.6); }
+.ctr {
+  position: absolute; top: 18px; right: 26px;
+  font-size: 12px; color: #333; z-index: 50;
+}
+
+/* ── VIEW TOGGLE ────────────────────────────────────── */
+.vtoggle {
+  position: absolute; top: 18px; left: 20px;
+  display: flex; border: 1px solid var(--bord);
+  border-radius: 8px; overflow: hidden; z-index: 50;
+}
+.vtab {
+  padding: 5px 14px; background: none; border: none;
+  color: var(--mute); font-size: 11px; font-weight: 600;
+  cursor: pointer; transition: background .2s, color .2s;
+  letter-spacing: .5px; text-transform: uppercase;
+}
+.vtab.on { background: rgba(255,87,34,.15); color: var(--fire); }
+.vtab:hover:not(.on) { background: rgba(255,255,255,.05); color: var(--txt); }
+
+/* dv = detail view (default), pv = presentation view */
+.slide .dv {
+  display: flex; flex-direction: column;
+  align-items: center; width: 100%;
+}
+.slide .pv {
+  display: none; flex-direction: column;
+  align-items: center; width: 100%;
+  max-width: 700px; gap: 12px;
+}
+.slide.show-pv .dv { display: none !important; }
+.slide.show-pv .pv { display: flex; }
+
+.pv-item {
+  background: var(--surf); border: 1px solid var(--bord);
+  border-radius: 10px; padding: 14px 22px; width: 100%;
+}
+.pv-item strong { font-size: 15px; color: var(--txt); display: block; margin-bottom: 5px; }
+.pv-item span { font-size: 13px; color: #999; line-height: 1.6; }
+.pv-big { font-size: 42px; font-weight: 900; color: var(--fire); line-height: 1; }
+.pv-big.g { color: var(--safe); }
+</style>
+</head>
+<body>
+<div id="stage">
+
+<div class="vtoggle">
+  <button class="vtab on" id="tabDv" onclick="setView('dv')">Details</button>
+  <button class="vtab"    id="tabPv" onclick="setView('pv')">Presentation</button>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     1 — COUVERTURE
+════════════════════════════════════════════════ -->
+<div class="slide active">
+  <div class="chip">Projet IA — Deep Learning</div>
+  <h1>Detection d'Incendie<br>par Vision Artificielle</h1>
+  <p class="sub">
+    Systeme de classification d'images base sur un reseau de neurones convolutif<br>
+    et le Transfer Learning — MobileNetV2 + TensorFlow
+  </p>
+  <div class="tags" style="justify-content:center;">
+    <span class="tag fire">MobileNetV2</span>
+    <span class="tag fire">TensorFlow / Keras</span>
+    <span class="tag safe">Precision : 99 %</span>
+    <span class="tag">Flask — Application Web</span>
+    <span class="tag">Mai 2026</span>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     2 — PROBLEME
+════════════════════════════════════════════════ -->
+<div class="slide">
+  <div class="chip">Contexte</div>
+  <h2>Pourquoi detecter les incendies <em>automatiquement</em> ?</h2>
+  <div class="row" style="max-width:1000px;">
+    <div class="card fire" style="flex:1;">
+      <h3>Le probleme</h3>
+      <p>Les incendies se propagent tres vite. Surveiller en permanence des dizaines de cameras est impossible pour un humain. Chaque minute perdue avant l'alerte peut etre fatale.</p>
+    </div>
+    <div class="card safe" style="flex:1;">
+      <h3>La solution IA</h3>
+      <p>Un modele analyse une image en moins de <strong style="color:#fff;">100 ms</strong>, 24h/24, sans fatigue. Il declenche une alerte des qu'un incendie apparait sur le flux d'une camera.</p>
+    </div>
+    <div class="card blue" style="flex:1;">
+      <h3>Notre objectif</h3>
+      <p>Classer chaque image en <strong style="color:#fff;">Feu</strong> ou <strong style="color:#fff;">Pas de feu</strong> avec un taux d'erreur le plus bas possible — et surtout : ne jamais rater un vrai incendie.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     3 — C'EST QUOI UN CNN ?
+════════════════════════════════════════════════ -->
+<div class="slide">
+  <div class="chip b">Concept cle</div>
+  <h2>C'est quoi un <em class="b">reseau de neurones</em> convolutif ?</h2>
+  <div class="row" style="max-width:1000px;align-items:flex-start;">
+    <div class="col" style="flex:1.1;">
+      <div class="card blue">
+        <h3>Analogie simple</h3>
+        <p>Quand tu regardes une photo de feu, ton cerveau detecte d'abord des <strong style="color:#fff;">couleurs</strong>, puis des <strong style="color:#fff;">formes</strong>, puis des <strong style="color:#fff;">flammes</strong>. Un CNN fait exactement la meme chose — mais avec des calculs mathematiques.</p>
+      </div>
+      <div class="card">
+        <h3>Ce que detecte chaque niveau</h3>
+        <div class="steps" style="gap:7px;margin-top:4px;">
+          <div class="step" style="padding:10px 14px;">
+            <div class="step-num">1</div>
+            <div class="step-body"><h4>Couches basses</h4><p>Bords, lignes, gradients de couleur</p></div>
+          </div>
+          <div class="step" style="padding:10px 14px;">
+            <div class="step-num">2</div>
+            <div class="step-body"><h4>Couches moyennes</h4><p>Textures, cercles, motifs de flammes</p></div>
+          </div>
+          <div class="step" style="padding:10px 14px;">
+            <div class="step-num">3</div>
+            <div class="step-body"><h4>Couches hautes</h4><p>Concepts : "couleur feu", "fumee", "luminosite"</p></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col" style="flex:.9;align-items:center;justify-content:center;padding-top:10px;">
+      <div class="arch">
+        <div class="arch-box ablue">Image 224 × 224 pixels</div>
+        <div class="arch-arrow">&#8595;</div>
+        <div class="arch-box agray">Convolution — detecte des motifs</div>
+        <div class="arch-arrow">&#8595;</div>
+        <div class="arch-box agray">Pooling — compresse l'info</div>
+        <div class="arch-arrow">&#8595;</div>
+        <div class="arch-box agray">Convolution (plus profond)</div>
+        <div class="arch-arrow">&#8595;</div>
+        <div class="arch-box asoft">Dense — prend la decision</div>
+        <div class="arch-arrow">&#8595;</div>
+        <div class="arch-box asafe">Feu ? Pas de feu ?</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     4 — TRANSFER LEARNING
+════════════════════════════════════════════════ -->
+<div class="slide">
+  <div class="chip">Technique cle</div>
+  <h2>Le <em>Transfer Learning</em></h2>
+  <div class="row" style="max-width:1000px;align-items:flex-start;">
+    <div class="col" style="flex:1.1;">
+      <div class="card fire">
+        <h3>Analogie</h3>
+        <p>Un medecin qui apprend la radiologie n'oublie pas son anatomie. Il <strong style="color:#fff;">reutilise ses connaissances</strong> et se specialise seulement sur la partie radio. C'est exactement le Transfer Learning.</p>
+      </div>
+      <div class="card">
+        <h3>Dans notre projet</h3>
+        <p>MobileNetV2 a ete entraine sur <strong style="color:#fff;">1,2 million d'images</strong> (ImageNet). Il sait reconnaitre formes, textures, objets. On gele ce savoir et on ajoute une petite tete "feu / pas de feu".</p>
+      </div>
+      <div class="card safe">
+        <h3>Avantage concret</h3>
+        <p>Entrainement <strong style="color:#fff;">10x plus rapide</strong> et meilleurs resultats avec seulement 999 images au lieu de millions.</p>
+      </div>
+    </div>
+    <div class="col" style="flex:.9;align-items:center;padding-top:10px;">
+      <div class="arch">
+        <div class="arch-box ablue" style="min-width:320px;">
+          MobileNetV2 pre-entraine
+          <div class="arch-sub">2 334 720 parametres — GELES</div>
+        </div>
+        <div class="arch-arrow">&#8595;</div>
+        <div class="arch-box agray" style="min-width:320px;">
+          Savoir general : formes, textures
+          <div class="arch-sub">appris sur ImageNet (1,2M images)</div>
+        </div>
+        <div class="arch-arrow">&#8595;</div>
+        <div class="arch-box afire" style="min-width:320px;">
+          Notre tete : Dense(256) + Dense(1)
+          <div class="arch-sub">208 897 parametres — A ENTRAINER</div>
+        </div>
+        <div class="arch-arrow">&#8595;</div>
+        <div class="arch-box asafe" style="min-width:320px;">
+          Seulement 9 % a apprendre !
+          <div class="arch-sub">le reste est deja "intelligent"</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     5 — ARCHITECTURE MODELE
+════════════════════════════════════════════════ -->
+<div class="slide">
+  <div class="chip">Architecture</div>
+  <h2>Notre modele complet</h2>
+  <div class="row" style="max-width:1020px;align-items:flex-start;">
+    <div class="col" style="flex:.95;align-items:center;padding-top:6px;">
+      <div class="arch">
+        <div class="arch-box ablue" style="min-width:340px;">
+          Entree image
+          <div class="arch-sub">224 × 224 × 3 canaux (RGB)</div>
+        </div>
+        <div class="arch-arrow">&#8595;</div>
+        <div class="arch-box agray" style="min-width:340px;">
+          MobileNetV2 — 16 blocs convolutifs
+          <div class="arch-sub">Gele — 2 334 720 parametres</div>
+        </div>
+        <div class="arch-arrow">&#8595;</div>
+        <div class="arch-box agray" style="min-width:340px;">
+          GlobalAveragePooling2D
+          <div class="arch-sub">compresse en 1 280 valeurs</div>
+        </div>
+        <div class="arch-arrow">&#8595;</div>
+        <div class="arch-box afire" style="min-width:340px;">
+          Dense(256, ReLU) + Dropout(0.2)
+          <div class="arch-sub">couche de specialisation</div>
+        </div>
+        <div class="arch-arrow">&#8595;</div>
+        <div class="arch-box asafe" style="min-width:340px;">
+          Dense(1, Sigmoid)
+          <div class="arch-sub">0 = Feu &nbsp;|&nbsp; 1 = Pas de feu</div>
+        </div>
+      </div>
+    </div>
+    <div class="col" style="flex:1;gap:14px;">
+      <div class="stat" style="flex:none;">
+        <div class="stat-label">Parametres totaux</div>
+        <div class="stat-val" style="font-size:40px;">2,3 M</div>
+        <div class="stat-sub">dont 91 % geles (non modifies)</div>
+      </div>
+      <div class="stat safe" style="flex:none;border-color:rgba(0,230,118,.3);">
+        <div class="stat-label">Parametres entraines</div>
+        <div class="stat-val g" style="font-size:40px;">208 897</div>
+        <div class="stat-sub">uniquement la tete de classification</div>
+      </div>
+      <div class="card">
+        <h3>Pourquoi MobileNetV2 ?</h3>
+        <p>Architecture legere, conçue pour les appareils embarques (telephone, camera). Rapide a l'inference, ideale pour un deploiement reel sur camera de surveillance.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     6 — DONNEES
+════════════════════════════════════════════════ -->
+<div class="slide">
+  <div class="chip">Donnees</div>
+  <h2>Le Dataset — <em>999 images</em></h2>
+  <div class="row" style="max-width:1020px;align-items:flex-start;">
+    <div class="col" style="flex:1;">
+      <div class="row">
+        <div class="stat" style="flex:none;flex:1;border-color:rgba(255,87,34,.35);">
+          <div class="stat-label">Images de feu</div>
+          <div class="stat-val">755</div>
+          <div class="stat-sub">75,6 % du total</div>
+        </div>
+        <div class="stat" style="flex:none;flex:1;border-color:rgba(66,165,245,.3);">
+          <div class="stat-label">Sans feu</div>
+          <div class="stat-val b" style="font-size:40px;">244</div>
+          <div class="stat-sub">24,4 % du total</div>
+        </div>
+      </div>
+      <div class="card fire">
+        <h3>Desequilibre de classes</h3>
+        <p style="margin-bottom:12px;">3x plus de feu que de non-feu. Sans correction, le modele apprendrait a tout classer "feu".</p>
+        <div class="bar-row">
+          <span class="bar-lbl">fire_images</span>
+          <div class="bar-track"><div class="bar-fill" style="width:75.6%"></div></div>
+          <span class="bar-val">75,6 %</span>
+        </div>
+        <div class="bar-row">
+          <span class="bar-lbl">non_fire</span>
+          <div class="bar-track"><div class="bar-fill g" style="width:24.4%"></div></div>
+          <span class="bar-val">24,4 %</span>
+        </div>
+      </div>
+    </div>
+    <div class="col" style="flex:1;">
+      <div class="card safe">
+        <h3>Solution 1 — Class Weighting</h3>
+        <p>On penalise davantage les erreurs sur la classe minoritaire. Le modele ne peut pas ignorer les images "non-feu".</p>
+      </div>
+      <div class="card">
+        <h3>Solution 2 — Augmentation de donnees</h3>
+        <p>On simule plus d'images en appliquant des transformations aleatoires a chaque epoch :</p>
+        <div class="tags" style="margin-top:10px;">
+          <span class="tag fire">Rotation ±20°</span>
+          <span class="tag">Flip horizontal</span>
+          <span class="tag">Zoom ±10 %</span>
+          <span class="tag">Luminosite variable</span>
+          <span class="tag">Translation ±10 %</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     7 — SPLIT TRAIN / VAL / TEST
+════════════════════════════════════════════════ -->
+<div class="slide">
+  <div class="chip">Methode</div>
+  <h2>Decoupage des donnees</h2>
+  <div class="row" style="max-width:1020px;align-items:flex-start;">
+    <div class="col" style="flex:1;">
+      <div class="card">
+        <h3>Repartition des 999 images</h3>
+        <div style="margin-top:14px;">
+          <div class="bar-row">
+            <span class="bar-lbl">Train</span>
+            <div class="bar-track"><div class="bar-fill" style="width:64%"></div></div>
+            <span class="bar-val">640</span>
+          </div>
+          <div class="bar-row">
+            <span class="bar-lbl">Validation</span>
+            <div class="bar-track"><div class="bar-fill" style="width:16%;background:var(--fire2)"></div></div>
+            <span class="bar-val">159</span>
+          </div>
+          <div class="bar-row">
+            <span class="bar-lbl">Test</span>
+            <div class="bar-track"><div class="bar-fill g" style="width:20%"></div></div>
+            <span class="bar-val">200</span>
+          </div>
+        </div>
+      </div>
+      <div class="card safe">
+        <h3>Zero fuite de donnees</h3>
+        <p>Le test set est separe <strong style="color:#fff;">avant</strong> tout traitement. Le modele ne voit jamais ces images pendant l'entrainement. Intersection train ∩ test = <strong style="color:#fff;">0 image</strong>.</p>
+      </div>
+    </div>
+    <div class="col" style="flex:1;">
+      <div class="card">
+        <h3>A quoi servent les 3 parties ?</h3>
+        <div class="steps" style="margin-top:8px;">
+          <div class="step">
+            <div class="step-num" style="background:rgba(255,87,34,.15);border-color:rgba(255,87,34,.4);color:var(--fire);">1</div>
+            <div class="step-body"><h4>Train (640)</h4><p>Le modele apprend sur ces images — poids mis a jour a chaque epoch</p></div>
+          </div>
+          <div class="step">
+            <div class="step-num" style="background:rgba(255,214,0,.12);border-color:rgba(255,214,0,.4);color:var(--fire2);">2</div>
+            <div class="step-body"><h4>Validation (159)</h4><p>Surveille que le modele ne "memorise" pas — detecte le surapprentissage</p></div>
+          </div>
+          <div class="step">
+            <div class="step-num" style="background:rgba(0,230,118,.12);border-color:rgba(0,230,118,.4);color:var(--safe);">3</div>
+            <div class="step-body"><h4>Test (200)</h4><p>Mesure la performance reelle sur des images totalement inconnues</p></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     8 — ENTRAINEMENT
+════════════════════════════════════════════════ -->
+<div class="slide">
+  <div class="chip">Entrainement</div>
+  <h2>Comment le modele <em>apprend</em> ?</h2>
+  <div class="row" style="max-width:1020px;align-items:flex-start;">
+    <div class="col" style="flex:1;">
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <div class="step-body"><h4>Prediction sur un batch de 32 images</h4><p>Le modele produit ses premieres estimations (souvent mauvaises au debut)</p></div>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <div class="step-body"><h4>Calcul de l'erreur — Binary Crossentropy</h4><p>On mesure a quel point les predictions sont eloignees de la realite</p></div>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <div class="step-body"><h4>Retropropagation (Backpropagation)</h4><p>L'erreur remonte dans le reseau pour identifier quels poids corriger</p></div>
+        </div>
+        <div class="step">
+          <div class="step-num">4</div>
+          <div class="step-body"><h4>Mise a jour des poids — Adam lr=0,0001</h4><p>Les poids sont ajustes dans la bonne direction. On recommence.</p></div>
+        </div>
+      </div>
+    </div>
+    <div class="col" style="flex:1;gap:14px;">
+      <div class="card fire">
+        <h3>EarlyStopping</h3>
+        <p>Si la validation ne s'ameliore plus pendant <strong style="color:#fff;">5 epochs</strong> consecutives, l'entrainement s'arrete automatiquement. Evite le gaspillage et le surapprentissage.</p>
+      </div>
+      <div class="card safe">
+        <h3>Checkpoint — sauvegarde automatique</h3>
+        <p>Les meilleurs poids (meilleure val_loss) sont sauvegardes dans <code>mobilenet_v2.weights.h5</code>. Si l'entrainement deraille, on recharge le meilleur etat.</p>
+      </div>
+      <div class="card">
+        <h3>Phase 2 — Fine-tuning optionnel</h3>
+        <p>On degele les 30 derniers layers de MobileNetV2 et on reentrainement avec un learning rate 10x plus petit (lr = 1e-5) pour gagner 1 a 2 % supplementaires.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     9 — RESULTATS
+════════════════════════════════════════════════ -->
+<div class="slide">
+  <div class="chip g">Resultats</div>
+  <h2>Performances — <em class="g">200 images de test</em></h2>
+  <div class="row" style="max-width:1020px;align-items:flex-start;">
+    <div class="col" style="flex:1;gap:12px;">
+      <div class="row">
+        <div class="stat" style="flex:1;border-color:rgba(0,230,118,.35);">
+          <div class="stat-label">Accuracy</div>
+          <div class="stat-val g">99 %</div>
+          <div class="stat-sub">198 / 200 correctes</div>
+        </div>
+        <div class="stat" style="flex:1;border-color:rgba(255,87,34,.35);">
+          <div class="stat-label">Recall feu</div>
+          <div class="stat-val">100 %</div>
+          <div class="stat-sub">0 incendie manque</div>
+        </div>
+      </div>
+      <div class="card safe">
+        <h3>Matrice de confusion</h3>
+        <div class="cm" style="margin-top:12px;">
+          <div class="cmh"></div>
+          <div class="cmh">Predit Feu</div>
+          <div class="cmh">Predit Non-feu</div>
+          <div class="cmh" style="font-size:11px;writing-mode:vertical-lr;transform:rotate(180deg);padding:4px;">Reel Feu</div>
+          <div class="cmc tp"><span class="cv">148</span><span class="cl">Vrais Positifs</span></div>
+          <div class="cmc fn"><span class="cv">0</span><span class="cl">Faux Negatifs</span></div>
+          <div class="cmh" style="font-size:11px;writing-mode:vertical-lr;transform:rotate(180deg);padding:4px;">Reel Non-feu</div>
+          <div class="cmc fp"><span class="cv">2</span><span class="cl">Fausses Alarmes</span></div>
+          <div class="cmc tn"><span class="cv">50</span><span class="cl">Vrais Negatifs</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="col" style="flex:1;gap:14px;">
+      <div class="card safe">
+        <h3>0 faux negatif — L'objectif est atteint</h3>
+        <p>Aucun incendie n'a ete manque sur les 200 images de test. C'est le critere prioritaire pour un systeme de surveillance : mieux vaut une fausse alarme qu'un incendie non detecte.</p>
+      </div>
+      <div class="card">
+        <h3>2 fausses alarmes sur 200</h3>
+        <p>2 images "non-feu" classees "feu" a tort. Ces 2 erreurs s'expliquent — ce ne sont pas des erreurs aleatoires. Voir slide suivante.</p>
+      </div>
+      <div class="card">
+        <h3>Confiance moyenne</h3>
+        <div class="bar-row" style="margin-top:6px;">
+          <span class="bar-lbl">Globale</span>
+          <div class="bar-track"><div class="bar-fill g" style="width:97.1%"></div></div>
+          <span class="bar-val">97 %</span>
+        </div>
+        <div class="bar-row">
+          <span class="bar-lbl">Tres sure (&gt;95 %)</span>
+          <div class="bar-track"><div class="bar-fill g" style="width:86.5%"></div></div>
+          <span class="bar-val">86 %</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     10 — ANALYSE ERREURS
+════════════════════════════════════════════════ -->
+<div class="slide">
+  <div class="chip">Analyse</div>
+  <h2>Les <em>2 erreurs</em> sur 200 — Comprendre pourquoi</h2>
+  <div class="row" style="max-width:1020px;align-items:flex-start;">
+    <div class="card fire" style="flex:1;">
+      <h3>Erreur 1 — Confiance 99,8 %</h3>
+      <p style="margin:10px 0;"><strong style="color:#ccc;">Label :</strong> non_fire &nbsp;→&nbsp; <strong style="color:var(--fire);">Prediction : feu</strong></p>
+      <p>L'image montre un vrai grand incendie de foret avec flammes et fumee dense. L'annotation humaine dans le dataset est incorrecte.</p>
+      <p style="margin-top:12px;color:#ccc;">Conclusion : <strong style="color:#fff;">le modele est plus precis que le label.</strong> Ce n'est pas une erreur du modele — c'est un probleme de qualite des donnees.</p>
+      <div class="tags"><span class="tag">Erreur de label</span><span class="tag fire">Dataset bruite</span></div>
+    </div>
+    <div class="card" style="flex:1;border-color:rgba(255,214,0,.25);">
+      <h3>Erreur 2 — Confiance 63,6 %</h3>
+      <p style="margin:10px 0;"><strong style="color:#ccc;">Label :</strong> non_fire &nbsp;→&nbsp; <strong style="color:var(--fire);">Prediction : feu</strong></p>
+      <p>Screenshot du jeu video "The Witcher 3" : un oiseau aux plumes orange/rouge dans une foret. Le modele confond les teintes chaudes avec des flammes.</p>
+      <p style="margin-top:12px;color:#ccc;">Solution : ajouter ce type d'images dans le dataset d'entrainement pour apprendre la difference.</p>
+      <div class="tags"><span class="tag">Couleurs chaudes</span><span class="tag">Cas difficile</span></div>
+    </div>
+  </div>
+  <div class="card" style="max-width:1020px;margin-top:14px;text-align:left;">
+    <h3>Lecon cle</h3>
+    <p>Un CNN apprend des <strong style="color:#fff;">patterns visuels</strong> (couleurs, textures, formes), pas des concepts semantiques ("est-ce une flamme ou un oiseau ?"). Pour differencier, il faut montrer des exemples contrastifs pendant l'entrainement.</p>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     11 — GRAD-CAM
+════════════════════════════════════════════════ -->
+<div class="slide">
+  <div class="chip">Interpretabilite</div>
+  <h2>Grad-CAM — <em>Comprendre ce que voit l'IA</em></h2>
+  <div class="row" style="max-width:1020px;align-items:flex-start;">
+    <div class="col" style="flex:1;gap:14px;">
+      <div class="card fire">
+        <h3>Le probleme des boites noires</h3>
+        <p>Les reseaux de neurones donnent une reponse, mais on ne sait pas <strong style="color:#fff;">pourquoi</strong>. Est-ce qu'il regarde vraiment les flammes ou un detail sans rapport ? Grad-CAM repond a cette question.</p>
+      </div>
+      <div class="card">
+        <h3>Ce qu'on obtient</h3>
+        <p>Une heatmap coloree superposee sur l'image. Les zones <strong style="color:#ffd600;">jaunes/claires</strong> sont celles qui ont le plus influence la decision du modele.</p>
+      </div>
+      <div class="card safe">
+        <h3>Dans notre app web</h3>
+        <p>Bouton "Afficher Grad-CAM" apres chaque prediction. Montre cote a cote l'image originale et la heatmap, pour valider que le modele regarde au bon endroit.</p>
+      </div>
+    </div>
+    <div class="col" style="flex:1;align-items:center;">
+      <div class="arch" style="gap:0;width:100%;">
+        <div class="arch-box ablue" style="min-width:360px;">Image d'entree</div>
+        <div class="arch-arrow">&#8595;</div>
+        <div class="arch-box agray" style="min-width:360px;">Prediction (ex: 98 % feu)</div>
+        <div class="arch-arrow">&#8595;</div>
+        <div class="arch-box agray" style="min-width:360px;">Gradient : importance de chaque zone
+          <div class="arch-sub">dPrediction / dActivations_conv</div>
+        </div>
+        <div class="arch-arrow">&#8595;</div>
+        <div class="arch-box asoft" style="min-width:360px;">Heatmap 7×7 pixels
+          <div class="arch-sub">redimensionnee a 224×224</div>
+        </div>
+        <div class="arch-arrow">&#8595;</div>
+        <div class="arch-box asafe" style="min-width:360px;">Overlay colore sur l'image
+          <div class="arch-sub">zones claires = zones decisives</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     12 — APPLICATION WEB
+════════════════════════════════════════════════ -->
+<div class="slide">
+  <div class="chip">Demo</div>
+  <h2>Application Web — <em>Tester le modele</em></h2>
+  <div class="row" style="max-width:1020px;align-items:flex-start;">
+    <div class="col" style="flex:1;gap:14px;">
+      <div class="card fire">
+        <h3>Technologie : Flask (Python)</h3>
+        <p>Serveur web leger qui expose le modele via une API. Deux routes principales :</p>
+        <p style="margin-top:8px;"><code>GET /</code> &nbsp; — &nbsp; interface de chargement</p>
+        <p style="margin-top:4px;"><code>POST /predict</code> &nbsp; — &nbsp; analyse de l'image</p>
+      </div>
+      <div class="card safe">
+        <h3>Fonctionnalites</h3>
+        <div class="steps" style="gap:7px;margin-top:6px;">
+          <div class="step" style="padding:9px 13px;"><div class="step-num" style="width:22px;height:22px;font-size:11px;">1</div><div class="step-body"><p>Upload par glisser-deposer ou clic</p></div></div>
+          <div class="step" style="padding:9px 13px;"><div class="step-num" style="width:22px;height:22px;font-size:11px;">2</div><div class="step-body"><p>Prediction en temps reel (&lt; 1 seconde)</p></div></div>
+          <div class="step" style="padding:9px 13px;"><div class="step-num" style="width:22px;height:22px;font-size:11px;">3</div><div class="step-body"><p>Barre de confiance + score brut</p></div></div>
+          <div class="step" style="padding:9px 13px;"><div class="step-num" style="width:22px;height:22px;font-size:11px;">4</div><div class="step-body"><p>Visualisation Grad-CAM interactive</p></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="col" style="flex:1;gap:14px;">
+      <div class="card">
+        <h3>Pipeline de l'API</h3>
+        <div class="arch" style="margin-top:12px;gap:0;">
+          <div class="arch-box ablue" style="min-width:300px;">Upload image (PNG / JPG)</div>
+          <div class="arch-arrow">&#8595;</div>
+          <div class="arch-box agray" style="min-width:300px;">Redimensionnement 224×224 + normalisation</div>
+          <div class="arch-arrow">&#8595;</div>
+          <div class="arch-box agray" style="min-width:300px;">model.predict() → valeur entre 0 et 1</div>
+          <div class="arch-arrow">&#8595;</div>
+          <div class="arch-box afire" style="min-width:300px;">Calcul Grad-CAM + overlay</div>
+          <div class="arch-arrow">&#8595;</div>
+          <div class="arch-box asafe" style="min-width:300px;">Reponse JSON → affichage dans le navigateur</div>
+        </div>
+      </div>
+      <div class="card" style="background:rgba(0,0,0,.3);">
+        <p style="font-family:monospace;font-size:14px;color:#aaa;line-height:2;">
+          <span style="color:var(--safe);">$</span> <span style="color:#fff;">python app.py</span><br>
+          <span style="color:var(--mute);">Modele charge avec succes.</span><br>
+          <span style="color:var(--mute);">Grad-CAM disponible.</span><br>
+          <span style="color:var(--safe);">→</span> <span style="color:#42a5f5;">http://localhost:5000</span>
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     13 — LIMITATIONS & AMELIORATIONS
+════════════════════════════════════════════════ -->
+<div class="slide">
+  <div class="chip">Perspectives</div>
+  <h2>Limitations &amp; <em>Ameliorations</em></h2>
+  <div class="row" style="max-width:1020px;align-items:flex-start;">
+    <div class="col" style="flex:1;">
+      <div class="card fire">
+        <h3>Limitation principale</h3>
+        <p>Le modele classe l'<strong style="color:#fff;">image entiere</strong>. Il ne localise pas le feu (pas de cadre autour des flammes). Pour ca, il faudrait un modele de detection d'objets (YOLO, SSD).</p>
+      </div>
+      <div class="card">
+        <h3>Court terme</h3>
+        <p>Nettoyer les labels incorrects dans le dataset. Ajouter des cas difficiles (couchers de soleil, lumieres orange, reflets sur l'eau) dans la classe non-feu.</p>
+      </div>
+    </div>
+    <div class="col" style="flex:1;">
+      <div class="card">
+        <h3>Moyen terme</h3>
+        <p>Fine-tuning complet des 30 derniers layers de MobileNetV2 (lr = 1e-5). Ajuster le seuil de decision (ex : 0,3) selon la tolerance aux fausses alarmes.</p>
+      </div>
+      <div class="card safe">
+        <h3>Long terme</h3>
+        <p>Convertir en <strong style="color:#fff;">TFLite</strong> pour des cameras embarquees. Appliquer le modele frame par frame sur un flux video avec lissage temporel pour eviter les faux positifs fugaces.</p>
+      </div>
+      <div class="card">
+        <h3>Atout deja present</h3>
+        <p>Recall 100 % — aucun incendie manque. La Grad-CAM confirme que le modele regarde les zones de flammes, pas des artefacts aleatoires.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     14 — CONCLUSION
+════════════════════════════════════════════════ -->
+<div class="slide">
+  <div class="chip g">Conclusion</div>
+  <h2>Ce que j'ai <em class="g">realise</em></h2>
+  <div class="row" style="max-width:1020px;align-items:flex-start;">
+    <div class="col" style="flex:1;gap:12px;">
+      <div class="row">
+        <div class="stat" style="flex:1;border-color:rgba(0,230,118,.35);">
+          <div class="stat-label">Accuracy test</div>
+          <div class="stat-val g" style="font-size:46px;">99 %</div>
+        </div>
+        <div class="stat" style="flex:1;border-color:rgba(255,87,34,.35);">
+          <div class="stat-label">Feux manques</div>
+          <div class="stat-val" style="font-size:46px;">0</div>
+        </div>
+      </div>
+      <div class="card safe">
+        <h3>Competences acquises</h3>
+        <div class="steps" style="gap:6px;margin-top:8px;">
+          <div class="step" style="padding:8px 13px;"><div class="step-num" style="width:20px;height:20px;font-size:10px;background:rgba(0,230,118,.12);border-color:rgba(0,230,118,.4);color:var(--safe);">&#10003;</div><div class="step-body"><p>Transfer Learning — reutiliser un modele pre-entraine</p></div></div>
+          <div class="step" style="padding:8px 13px;"><div class="step-num" style="width:20px;height:20px;font-size:10px;background:rgba(0,230,118,.12);border-color:rgba(0,230,118,.4);color:var(--safe);">&#10003;</div><div class="step-body"><p>Gerer un dataset desequilibre avec class weighting</p></div></div>
+          <div class="step" style="padding:8px 13px;"><div class="step-num" style="width:20px;height:20px;font-size:10px;background:rgba(0,230,118,.12);border-color:rgba(0,230,118,.4);color:var(--safe);">&#10003;</div><div class="step-body"><p>Evaluer : F1-score, recall, matrice de confusion</p></div></div>
+          <div class="step" style="padding:8px 13px;"><div class="step-num" style="width:20px;height:20px;font-size:10px;background:rgba(0,230,118,.12);border-color:rgba(0,230,118,.4);color:var(--safe);">&#10003;</div><div class="step-body"><p>Interpreter avec Grad-CAM + deployer avec Flask</p></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="col" style="flex:1;gap:14px;">
+      <div class="card fire">
+        <h3>Stack technique complete</h3>
+        <div class="tags" style="margin-top:8px;">
+          <span class="tag fire">TensorFlow 2.21</span>
+          <span class="tag fire">Keras</span>
+          <span class="tag fire">MobileNetV2</span>
+          <span class="tag">scikit-learn</span>
+          <span class="tag safe">Flask</span>
+          <span class="tag">Grad-CAM</span>
+          <span class="tag">NumPy</span>
+          <span class="tag">Pillow</span>
+          <span class="tag">Matplotlib</span>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Reproductibilite</h3>
+        <p>Seed fixee (<code>random_state=42</code>), dependances versionnees, split sans fuite de donnees. Tout le pipeline est relancable depuis zero.</p>
+      </div>
+      <div class="card safe">
+        <h3>Merci !</h3>
+        <p style="font-size:15px;color:#888;">Questions ?</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     NAVIGATION
+════════════════════════════════════════════════ -->
+<!-- ═══════════════════════════════════════════════
+     15 — SEPARATEUR FICHES TECHNIQUES
+════════════════════════════════════════════════ -->
+<div class="slide">
+  <div class="chip b">Annexe technique</div>
+  <h1 style="font-size:48px;">Fiches Techniques</h1>
+  <p class="sub">Detail de chaque technologie utilisee dans le projet</p>
+  <div class="row" style="max-width:900px;flex-wrap:wrap;justify-content:center;gap:12px;">
+    <span class="tag fire">TensorFlow 2.21</span>
+    <span class="tag fire">Keras</span>
+    <span class="tag fire">MobileNetV2</span>
+    <span class="tag">ImageNet</span>
+    <span class="tag">NumPy</span>
+    <span class="tag">Pandas</span>
+    <span class="tag">Matplotlib</span>
+    <span class="tag">scikit-learn</span>
+    <span class="tag">Pillow</span>
+    <span class="tag safe">Flask</span>
+    <span class="tag safe">Grad-CAM</span>
+    <span class="tag b">TFLite / Jetson / Coral</span>
+    <span class="tag b">LoRaWAN / 5G / Starlink</span>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     16 — TENSORFLOW 2.21
+════════════════════════════════════════════════ -->
+<div class="slide">
+  <div class="chip fire">Fiche Technique</div>
+  <h2><em>TensorFlow</em> 2.21 — Le moteur IA</h2>
+  <div class="row" style="max-width:1020px;align-items:flex-start;">
+    <div class="col" style="flex:1;">
+      <div class="card fire">
+        <h3>Qu'est-ce que c'est ?</h3>
+        <p>Framework open-source de machine learning developpe par <strong style="color:#fff;">Google Brain</strong> (2015). La version 2.x integre Keras nativement et active l'execution immediate (<em>eager mode</em>) par defaut — on voit les resultats ligne par ligne, comme du Python normal.</p>
+      </div>
+      <div class="card">
+        <h3>3 mecanismes cles</h3>
+        <div class="steps" style="gap:7px;margin-top:6px;">
+          <div class="step" style="padding:9px 13px;"><div class="step-num">1</div><div class="step-body"><h4>GradientTape</h4><p>Enregistre les calculs pour calculer les gradients automatiquement — utilise pour Grad-CAM</p></div></div>
+          <div class="step" style="padding:9px 13px;"><div class="step-num">2</div><div class="step-body"><h4>@tf.function</h4><p>Compile le code Python en graphe optimise — accelere l'inference de 2 a 10x</p></div></div>
+          <div class="step" style="padding:9px 13px;"><div class="step-num">3</div><div class="step-body"><h4>Auto GPU/TPU</h4><p>Detecte et utilise automatiquement le materiel disponible sans changer le code</p></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="col" style="flex:1;gap:14px;">
+      <div class="card safe">
+        <h3>Ecosysteme TensorFlow</h3>
+        <div class="steps" style="gap:6px;margin-top:6px;">
+          <div class="step" style="padding:8px 12px;"><div class="step-num" style="width:20px;height:20px;font-size:10px;">&#9632;</div><div class="step-body"><h4>TensorBoard</h4><p>Visualisation en temps reel des courbes d'entrainement</p></div></div>
+          <div class="step" style="padding:8px 12px;"><div class="step-num" style="width:20px;height:20px;font-size:10px;">&#9632;</div><div class="step-body"><h4>TFLite</h4><p>Deploiement sur mobile, Raspberry Pi, Jetson Nano</p></div></div>
+          <div class="step" style="padding:8px 12px;"><div class="step-num" style="width:20px;height:20px;font-size:10px;">&#9632;</div><div class="step-body"><h4>TF Serving</h4><p>API REST/gRPC pour servir le modele en production</p></div></div>
+          <div class="step" style="padding:8px 12px;"><div class="step-num" style="width:20px;height:20px;font-size:10px;">&#9632;</div><div class="step-body"><h4>TF Hub</h4><p>Bibliotheque de modeles pre-entraines prets a l'emploi</p></div></div>
+        </div>
+      </div>
+      <div class="row" style="gap:12px;">
+        <div class="stat" style="flex:1;border-color:rgba(255,87,34,.3);">
+          <div class="stat-label">Downloads/mois</div>
+          <div class="stat-val" style="font-size:34px;">50 M+</div>
+        </div>
+        <div class="stat" style="flex:1;border-color:rgba(66,165,245,.3);">
+          <div class="stat-label">Version projet</div>
+          <div class="stat-val b" style="font-size:34px;">2.21</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     17 — KERAS
+════════════════════════════════════════════════ -->
+<div class="slide">
+  <div class="chip fire">Fiche Technique</div>
+  <h2><em>Keras</em> — L'API haut niveau</h2>
+  <div class="row" style="max-width:1020px;align-items:flex-start;">
+    <div class="col" style="flex:1;">
+      <div class="card fire">
+        <h3>Qu'est-ce que c'est ?</h3>
+        <p>API Python de haut niveau integree dans TensorFlow depuis v2.0. Keras masque la complexite des calculs matriciels et permet de definir un modele en quelques lignes. Deux styles coexistent :</p>
+        <p style="margin-top:8px;"><code>Sequential</code> — couches empilees lineairement (simple)</p>
+        <p style="margin-top:4px;"><code>Functional</code> — graphe de couches (utilise ici pour acceder aux sous-couches de MobileNetV2)</p>
+      </div>
+      <div class="card">
+        <h3>Couches utilisees dans le projet</h3>
+        <div class="tags" style="margin-top:6px;">
+          <span class="tag fire">Dense(256, relu)</span>
+          <span class="tag fire">Dense(1, sigmoid)</span>
+          <span class="tag">Dropout(0.2)</span>
+          <span class="tag">GlobalAvgPool2D</span>
+          <span class="tag">Input(224,224,3)</span>
+          <span class="tag b">MobileNetV2 (bloc)</span>
+        </div>
+      </div>
+    </div>
+    <div class="col" style="flex:1;gap:14px;">
+      <div class="card safe">
+        <h3>Callbacks — les gardiens de l'entrainement</h3>
+        <div class="steps" style="gap:7px;margin-top:6px;">
+          <div class="step" style="padding:9px 12px;"><div class="step-num">1</div><div class="step-body"><h4>EarlyStopping(patience=5)</h4><p>Stoppe si val_loss ne s'ameliore plus pendant 5 epochs consecutives</p></div></div>
+          <div class="step" style="padding:9px 12px;"><div class="step-num">2</div><div class="step-body"><h4>ModelCheckpoint</h4><p>Sauvegarde automatique des meilleurs poids (val_loss minimum)</p></div></div>
+          <div class="step" style="padding:9px 12px;"><div class="step-num">3</div><div class="step-body"><h4>TensorBoard</h4><p>Log metrics en temps reel — visualisables via <code>tensorboard --logdir</code></p></div></div>
+        </div>
+      </div>
+      <div class="card blue">
+        <h3>Optimiseur & Loss</h3>
+        <p><strong style="color:#fff;">Adam</strong> (Adaptive Moment Estimation) : ajuste automatiquement le learning rate par parametre — converge plus vite que SGD classique.</p>
+        <p style="margin-top:6px;"><strong style="color:#fff;">BinaryCrossentropy</strong> : mesure la divergence entre la probabilite predite et l'etiquette reelle (0 ou 1). Ideal pour la sortie sigmoid.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     18 — MOBILENETV2 ARCHITECTURE PROFONDE
+════════════════════════════════════════════════ -->
+<div class="slide">
+  <div class="chip fire">Fiche Technique</div>
+  <h2><em>MobileNetV2</em> — Architecture en detail</h2>
+  <div class="row" style="max-width:1020px;align-items:flex-start;">
+    <div class="col" style="flex:1.1;">
+      <div class="card fire">
+        <h3>Innovation cle : Convolution Separable en Profondeur</h3>
+        <p>Une convolution standard traite tous les canaux ensemble. MobileNetV2 la decoupe en 2 etapes :</p>
+        <p style="margin-top:8px;"><strong style="color:#ff9040;">Etape 1 — Depthwise :</strong> une operation spatiale par canal (detecte les motifs)</p>
+        <p style="margin-top:4px;"><strong style="color:#ff9040;">Etape 2 — Pointwise :</strong> melange les canaux (combine les informations)</p>
+        <p style="margin-top:8px;color:var(--safe);font-weight:700;">Resultat : 8 a 9x moins de calculs qu'une convolution classique</p>
+      </div>
+      <div class="card">
+        <h3>Bloc Residuel Inverse (x16)</h3>
+        <div class="arch" style="flex-direction:row;gap:4px;align-items:center;flex-wrap:nowrap;margin-top:8px;">
+          <div class="arch-box afire" style="min-width:0;flex:1;padding:8px 6px;font-size:12px;">Expansion<div class="arch-sub">ReLU6</div></div>
+          <div style="font-size:16px;color:var(--mute);">&#8594;</div>
+          <div class="arch-box agray" style="min-width:0;flex:1;padding:8px 6px;font-size:12px;">Depthwise<div class="arch-sub">ReLU6</div></div>
+          <div style="font-size:16px;color:var(--mute);">&#8594;</div>
+          <div class="arch-box asafe" style="min-width:0;flex:1;padding:8px 6px;font-size:12px;">Projection<div class="arch-sub">Lineaire</div></div>
+        </div>
+        <p style="font-size:12px;color:var(--mute);margin-top:8px;">La projection est lineaire (sans activation) pour preserver l'information — c'est le "goulot lineaire".</p>
+      </div>
+    </div>
+    <div class="col" style="flex:.9;gap:12px;">
+      <div class="row" style="gap:12px;">
+        <div class="stat" style="flex:1;border-color:rgba(255,87,34,.3);">
+          <div class="stat-label">Blocs residuels</div>
+          <div class="stat-val" style="font-size:40px;">16</div>
+        </div>
+        <div class="stat" style="flex:1;border-color:rgba(0,230,118,.3);">
+          <div class="stat-label">Operations vs ResNet50</div>
+          <div class="stat-val g" style="font-size:40px;">-90%</div>
+        </div>
+      </div>
+      <div class="card safe">
+        <h3>Sortie avant GlobalAveragePooling</h3>
+        <p>La couche <code>out_relu</code> produit des cartes d'activation de taille <strong style="color:#fff;">7 × 7 × 1280</strong>. Chacune des 1280 cartes represente un concept visuel appris sur ImageNet.</p>
+        <p style="margin-top:8px;">C'est exactement ce que Grad-CAM exploite pour produire la heatmap.</p>
+      </div>
+      <div class="card">
+        <h3>ReLU6 — pourquoi 6 ?</h3>
+        <p>Fonction d'activation limitee a 6 : <code>min(max(0, x), 6)</code>. Evite les valeurs trop grandes sur les puces a precision reduite (int8). Cle pour la performance sur mobile et Coral TPU.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     19 — IMAGENET & TRANSFER LEARNING
+════════════════════════════════════════════════ -->
+<div class="slide">
+  <div class="chip b">Fiche Technique</div>
+  <h2><em class="b">ImageNet</em> — La base du Transfer Learning</h2>
+  <div class="row" style="max-width:1020px;align-items:flex-start;">
+    <div class="col" style="flex:1;">
+      <div class="row" style="gap:12px;">
+        <div class="stat" style="flex:1;border-color:rgba(66,165,245,.3);">
+          <div class="stat-label">Images</div>
+          <div class="stat-val b" style="font-size:36px;">14,2 M</div>
+        </div>
+        <div class="stat" style="flex:1;border-color:rgba(66,165,245,.3);">
+          <div class="stat-label">Classes</div>
+          <div class="stat-val b" style="font-size:36px;">1 000</div>
+        </div>
+      </div>
+      <div class="card blue">
+        <h3>ILSVRC — La competition qui a tout change</h3>
+        <p>ImageNet Large Scale Visual Recognition Challenge. En <strong style="color:#fff;">2012</strong>, AlexNet atteint <strong style="color:#fff;">15,3 % d'erreur</strong> (vs 26 % auparavant) — c'est le debut de la revolution deep learning. Depuis, tous les grands modeles (VGG, ResNet, Inception, MobileNet) sont evalues sur ce benchmark.</p>
+      </div>
+      <div class="card">
+        <h3>Pourquoi les features se transferent ?</h3>
+        <p><strong style="color:#fff;">Couches basses</strong> : detectent bords, lignes, gradients — universels, valables pour toute image</p>
+        <p style="margin-top:6px;"><strong style="color:#fff;">Couches moyennes</strong> : textures, motifs repetitifs, cercles</p>
+        <p style="margin-top:6px;"><strong style="color:#fff;">Couches hautes</strong> : concepts semantiques (yeux, roues, flammes...)</p>
+      </div>
+    </div>
+    <div class="col" style="flex:1;gap:14px;">
+      <div class="card fire">
+        <h3>Notre strategie de Transfer Learning</h3>
+        <div class="arch" style="margin-top:10px;">
+          <div class="arch-box ablue" style="min-width:320px;">MobileNetV2 pre-entraine ImageNet<div class="arch-sub">2 334 720 params — GELES (layer.trainable = False)</div></div>
+          <div class="arch-arrow">&#8595;</div>
+          <div class="arch-box afire" style="min-width:320px;">Phase 1 : on entraine seulement la tete<div class="arch-sub">208 897 params — lr = 1e-4 — rapide</div></div>
+          <div class="arch-arrow">&#8595;</div>
+          <div class="arch-box asoft" style="min-width:320px;">Phase 2 (fine-tuning) : on degele 30 layers<div class="arch-sub">lr = 1e-5 (10x plus petit) — ajustement fin</div></div>
+        </div>
+      </div>
+      <div class="card safe">
+        <h3>Gain concret</h3>
+        <p>Sans Transfer Learning : convergence difficile avec seulement 999 images, risque fort d'overfitting. Avec Transfer Learning : convergence en quelques epochs, 99 % d'accuracy.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     20 — NUMPY & PANDAS
+════════════════════════════════════════════════ -->
+<div class="slide">
+  <div class="chip b">Fiche Technique</div>
+  <h2><em class="b">NumPy</em> &amp; <em class="b">Pandas</em> — La colonne vertebrale des donnees</h2>
+  <div class="row" style="max-width:1020px;align-items:flex-start;">
+    <div class="col" style="flex:1;">
+      <div class="card blue">
+        <h3>NumPy 1.26.4 — Calcul matriciel</h3>
+        <p>Bibliotheque fondamentale pour le calcul numerique en Python. Ses tableaux (<code>ndarray</code>) sont implementes en C — 100x plus rapides que les listes Python.</p>
+      </div>
+      <div class="card">
+        <h3>Operations cles dans le projet</h3>
+        <div class="steps" style="gap:6px;margin-top:6px;">
+          <div class="step" style="padding:9px 12px;"><div class="step-num" style="font-size:10px;width:20px;height:20px;">&#9632;</div><div class="step-body"><h4><code>np.array(img, dtype=np.float32)</code></h4><p>Convertit PIL Image en tableau numpy — float32 = 4 octets/pixel (suffisant, 2x moins que float64)</p></div></div>
+          <div class="step" style="padding:9px 12px;"><div class="step-num" style="font-size:10px;width:20px;height:20px;">&#9632;</div><div class="step-body"><h4><code>img_array / 255.0</code></h4><p>Normalise uint8 [0, 255] → float32 [0, 1] — requis par MobileNetV2</p></div></div>
+          <div class="step" style="padding:9px 12px;"><div class="step-num" style="font-size:10px;width:20px;height:20px;">&#9632;</div><div class="step-body"><h4><code>np.expand_dims(arr, axis=0)</code></h4><p>Ajoute la dimension batch : (224,224,3) → (1,224,224,3)</p></div></div>
+          <div class="step" style="padding:9px 12px;"><div class="step-num" style="font-size:10px;width:20px;height:20px;">&#9632;</div><div class="step-body"><h4><code>np.uint8(255 * heatmap)</code></h4><p>Reconvertit la heatmap float [0,1] en image 8 bits pour Pillow</p></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="col" style="flex:1;gap:14px;">
+      <div class="card fire">
+        <h3>Pandas 2.2.2 — Gestion tabulaire</h3>
+        <p>Bibliotheque de manipulation de donnees structurees (tableaux, CSV, bases de donnees). Utilise ici pour construire le pipeline de chargement des images.</p>
+      </div>
+      <div class="card">
+        <h3>Role dans le pipeline</h3>
+        <div class="steps" style="gap:6px;margin-top:6px;">
+          <div class="step" style="padding:9px 12px;"><div class="step-num">1</div><div class="step-body"><h4>Construction du DataFrame</h4><p>Colonnes <code>filepath</code> et <code>label</code> pour chaque image du dataset</p></div></div>
+          <div class="step" style="padding:9px 12px;"><div class="step-num">2</div><div class="step-body"><h4>Split avec stratification</h4><p><code>train_test_split</code> preserve les proportions de classes dans chaque partition</p></div></div>
+          <div class="step" style="padding:9px 12px;"><div class="step-num">3</div><div class="step-body"><h4>Alimentation du generateur</h4><p><code>flow_from_dataframe</code> charge les images a la volee — pas tout en RAM</p></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     21 — MATPLOTLIB & SCIKIT-LEARN
+════════════════════════════════════════════════ -->
+<div class="slide">
+  <div class="chip b">Fiche Technique</div>
+  <h2><em class="b">Matplotlib</em> &amp; <em class="b">scikit-learn</em></h2>
+  <div class="row" style="max-width:1020px;align-items:flex-start;">
+    <div class="col" style="flex:1;">
+      <div class="card blue">
+        <h3>Matplotlib 3.10.8 — Visualisation</h3>
+        <p>Bibliotheque de tracage 2D la plus utilisee en Python. Moteur <code>Agg</code> (non-interactif) utilise cote serveur pour generer les images sans interface graphique.</p>
+      </div>
+      <div class="card">
+        <h3>Usages dans le projet</h3>
+        <div class="steps" style="gap:6px;margin-top:6px;">
+          <div class="step" style="padding:8px 11px;"><div class="step-num" style="width:20px;height:20px;font-size:10px;">&#9632;</div><div class="step-body"><h4>Courbes d'apprentissage</h4><p>Loss et accuracy train vs validation sur chaque epoch</p></div></div>
+          <div class="step" style="padding:8px 11px;"><div class="step-num" style="width:20px;height:20px;font-size:10px;">&#9632;</div><div class="step-body"><h4>Matrice de confusion</h4><p>Heatmap annotee avec colormap Blues</p></div></div>
+          <div class="step" style="padding:8px 11px;"><div class="step-num" style="width:20px;height:20px;font-size:10px;">&#9632;</div><div class="step-body"><h4>Colormap Grad-CAM</h4><p><code>matplotlib.colormaps['inferno']</code> : jaune=actif, violet=inactif</p></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="col" style="flex:1;gap:14px;">
+      <div class="card fire">
+        <h3>scikit-learn 1.8.0 — Evaluation & Utilitaires</h3>
+        <p>Bibliotheque machine learning polyvalente. Dans ce projet, utilisee principalement pour les metriques d'evaluation et les outils de preprocessing, pas pour le modele lui-meme (qui est dans TF/Keras).</p>
+      </div>
+      <div class="card">
+        <h3>Fonctions cles utilisees</h3>
+        <div class="steps" style="gap:6px;margin-top:6px;">
+          <div class="step" style="padding:8px 11px;"><div class="step-num">1</div><div class="step-body"><h4><code>train_test_split</code></h4><p>Separation aleatoire reproductible (random_state=42), stratifiee sur les classes</p></div></div>
+          <div class="step" style="padding:8px 11px;"><div class="step-num">2</div><div class="step-body"><h4><code>compute_class_weight('balanced')</code></h4><p>Calcule le poids inverse de frequence : fire=0,44 / non_fire=1,37</p></div></div>
+          <div class="step" style="padding:8px 11px;"><div class="step-num">3</div><div class="step-body"><h4><code>classification_report</code></h4><p>Precision, recall, F1 par classe + moyennes macro et weighted</p></div></div>
+          <div class="step" style="padding:8px 11px;"><div class="step-num">4</div><div class="step-body"><h4><code>confusion_matrix</code></h4><p>Matrice TP/FP/FN/TN — base de toute l'analyse des erreurs</p></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     22 — PILLOW (PIL)
+════════════════════════════════════════════════ -->
+<div class="slide">
+  <div class="chip b">Fiche Technique</div>
+  <h2><em class="b">Pillow 12.1.1</em> — Traitement d'images</h2>
+  <div class="row" style="max-width:1020px;align-items:flex-start;">
+    <div class="col" style="flex:1;">
+      <div class="card blue">
+        <h3>Qu'est-ce que c'est ?</h3>
+        <p>Fork maintenu de Python Imaging Library (PIL). Pillow est la reference pour le traitement d'images en Python : ouverture, conversion, redimensionnement, sauvegarde. Supporte plus de <strong style="color:#fff;">40 formats</strong> : PNG, JPEG, BMP, WebP, GIF, TIFF, TGA...</p>
+      </div>
+      <div class="card">
+        <h3>Pipeline dans <code>app.py</code></h3>
+        <div class="arch" style="margin-top:10px;">
+          <div class="arch-box ablue" style="min-width:300px;font-size:13px;"><code>Image.open(BytesIO(bytes))</code><div class="arch-sub">lecture depuis la memoire — pas de fichier temporaire sur disque</div></div>
+          <div class="arch-arrow">&#8595;</div>
+          <div class="arch-box agray" style="min-width:300px;font-size:13px;"><code>.convert('RGB')</code><div class="arch-sub">force 3 canaux : gere RGBA, niveaux de gris, palette</div></div>
+          <div class="arch-arrow">&#8595;</div>
+          <div class="arch-box agray" style="min-width:300px;font-size:13px;"><code>.resize((224, 224), LANCZOS)</code><div class="arch-sub">resampling Lanczos = meilleure qualite pour le redimensionnement</div></div>
+          <div class="arch-arrow">&#8595;</div>
+          <div class="arch-box asafe" style="min-width:300px;font-size:13px;"><code>np.array(img) / 255.0</code><div class="arch-sub">pret pour model.predict()</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="col" style="flex:1;gap:14px;">
+      <div class="card fire">
+        <h3>Role dans la generation Grad-CAM</h3>
+        <div class="steps" style="gap:7px;margin-top:6px;">
+          <div class="step" style="padding:9px 12px;"><div class="step-num">1</div><div class="step-body"><h4><code>Image.fromarray(np.uint8(255 * colored))</code></h4><p>Convertit la heatmap numpy (float) en image PIL prete pour la fusion</p></div></div>
+          <div class="step" style="padding:9px 12px;"><div class="step-num">2</div><div class="step-body"><h4><code>Image.blend(orig, heatmap, alpha=0.45)</code></h4><p>Fusion pixel a pixel : 55 % image originale + 45 % heatmap colorisee</p></div></div>
+          <div class="step" style="padding:9px 12px;"><div class="step-num">3</div><div class="step-body"><h4><code>.save(buf, format='JPEG', quality=90)</code></h4><p>Encode en JPEG (qualite 90) dans un buffer memoire → base64 pour le JSON</p></div></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>BytesIO — traitement en memoire</h3>
+        <p>Evite d'ecrire des fichiers temporaires sur le disque. L'image uploadee est lue, traitee et renvoyee entierement en RAM — plus rapide et plus propre pour un serveur web.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     23 — FLASK
+════════════════════════════════════════════════ -->
+<div class="slide">
+  <div class="chip g">Fiche Technique</div>
+  <h2><em class="g">Flask</em> — Le serveur web</h2>
+  <div class="row" style="max-width:1020px;align-items:flex-start;">
+    <div class="col" style="flex:1;">
+      <div class="card safe">
+        <h3>Qu'est-ce que c'est ?</h3>
+        <p>Micro-framework web Python cree par Armin Ronacher en 2010. "Micro" signifie qu'il ne fait que le strict necessaire : <strong style="color:#fff;">routage HTTP</strong> et <strong style="color:#fff;">gestion des requetes</strong>. Pas d'ORM, pas d'auth — ideal pour exposer un modele ML comme API.</p>
+      </div>
+      <div class="card">
+        <h3>Les 3 routes de notre app</h3>
+        <div class="steps" style="gap:7px;margin-top:6px;">
+          <div class="step" style="padding:9px 12px;"><div class="step-num" style="background:rgba(0,230,118,.12);border-color:rgba(0,230,118,.4);color:var(--safe);">GET</div><div class="step-body"><h4><code>GET /</code></h4><p>Sert la page HTML via Jinja2 — <code>render_template('index.html')</code></p></div></div>
+          <div class="step" style="padding:9px 12px;"><div class="step-num" style="background:rgba(255,87,34,.12);border-color:rgba(255,87,34,.4);color:var(--fire);">POST</div><div class="step-body"><h4><code>POST /predict</code></h4><p>Reçoit le fichier image, lance l'inference + Grad-CAM, retourne JSON</p></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="col" style="flex:1;gap:14px;">
+      <div class="card">
+        <h3>Mecanismes cles utilises</h3>
+        <div class="steps" style="gap:6px;margin-top:6px;">
+          <div class="step" style="padding:8px 11px;"><div class="step-num" style="width:20px;height:20px;font-size:10px;">&#9632;</div><div class="step-body"><h4><code>request.files['file']</code></h4><p>Acces au fichier multipart envoye par le navigateur</p></div></div>
+          <div class="step" style="padding:8px 11px;"><div class="step-num" style="width:20px;height:20px;font-size:10px;">&#9632;</div><div class="step-body"><h4><code>file.read()</code></h4><p>Lit les bytes bruts de l'image en memoire</p></div></div>
+          <div class="step" style="padding:8px 11px;"><div class="step-num" style="width:20px;height:20px;font-size:10px;">&#9632;</div><div class="step-body"><h4><code>jsonify({...})</code></h4><p>Serialise le dict Python en JSON avec le bon Content-Type</p></div></div>
+          <div class="step" style="padding:8px 11px;"><div class="step-num" style="width:20px;height:20px;font-size:10px;">&#9632;</div><div class="step-body"><h4><code>MAX_CONTENT_LENGTH = 16 Mo</code></h4><p>Limite la taille des uploads — protection contre les abus</p></div></div>
+          <div class="step" style="padding:8px 11px;"><div class="step-num" style="width:20px;height:20px;font-size:10px;">&#9632;</div><div class="step-body"><h4><code>debug=True</code></h4><p>Rechargement automatique du code + page d'erreur detaillee en dev</p></div></div>
+        </div>
+      </div>
+      <div class="card safe">
+        <h3>Demarrage</h3>
+        <p style="font-family:monospace;font-size:13px;line-height:2;color:#aaa;"><span style="color:var(--safe);">$</span> <span style="color:#fff;">pip install flask</span><br><span style="color:var(--safe);">$</span> <span style="color:#fff;">python app.py</span><br><span style="color:var(--mute);">→ Modele charge</span><br><span style="color:#42a5f5;">→ http://localhost:5000</span></p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     24 — GRAD-CAM MATHEMATIQUES
+════════════════════════════════════════════════ -->
+<div class="slide">
+  <div class="chip fire">Fiche Technique</div>
+  <h2><em>Grad-CAM</em> — Les mathematiques</h2>
+  <div class="row" style="max-width:1020px;align-items:flex-start;">
+    <div class="col" style="flex:1.1;">
+      <div class="card fire">
+        <h3>Papier de reference</h3>
+        <p>Selvaraju et al., <em>ICCV 2017</em> — "Grad-CAM: Visual Explanations from Deep Networks via Gradient-based Localization". Plus de <strong style="color:#fff;">10 000 citations</strong>. Methode devenue standard pour l'interpretabilite des CNN.</p>
+      </div>
+      <div class="card">
+        <h3>Formule</h3>
+        <p style="font-family:monospace;font-size:13px;color:#aaa;line-height:2.2;background:rgba(0,0,0,.3);padding:12px;border-radius:8px;margin-top:6px;">
+          <span style="color:#42a5f5;">alpha_k</span> = <span style="color:var(--mute);">(1/Z)</span> <span style="color:var(--fire2);">Sum_ij</span> [ <span style="color:var(--fire);">d(y_c)</span> / <span style="color:var(--safe);">d(A_k_ij)</span> ]<br>
+          <span style="color:var(--mute);">/* importance du filtre k pour la classe c */</span><br><br>
+          <span style="color:#42a5f5;">L_CAM</span> = <span style="color:var(--safe);">ReLU</span>( <span style="color:var(--fire2);">Sum_k</span> <span style="color:#42a5f5;">alpha_k</span> · <span style="color:var(--fire);">A_k</span> )<br>
+          <span style="color:var(--mute);">/* somme ponderee des cartes d'activation */</span>
+        </p>
+      </div>
+    </div>
+    <div class="col" style="flex:.9;">
+      <div class="card safe">
+        <h3>Implementation avec GradientTape</h3>
+        <div class="steps" style="gap:6px;margin-top:6px;">
+          <div class="step" style="padding:8px 11px;"><div class="step-num">1</div><div class="step-body"><h4>Extraction des features</h4><p><code>out_relu</code> → <code>conv_features (1,7,7,1280)</code> hors de la tape</p></div></div>
+          <div class="step" style="padding:8px 11px;"><div class="step-num">2</div><div class="step-body"><h4>tape.watch(conv_features)</h4><p>On demarre l'enregistrement du graphe depuis les features</p></div></div>
+          <div class="step" style="padding:8px 11px;"><div class="step-num">3</div><div class="step-body"><h4>Rejouer GAP + Dense layers</h4><p>Reconstruction du graphe : tf.reduce_mean → Dense → Dropout → sigmoid</p></div></div>
+          <div class="step" style="padding:8px 11px;"><div class="step-num">4</div><div class="step-body"><h4>tape.gradient(loss, conv_features)</h4><p>Calcul → shape (1,7,7,1280) — gradient de la perte par feature map</p></div></div>
+          <div class="step" style="padding:8px 11px;"><div class="step-num">5</div><div class="step-body"><h4>ReLU + normalisation → 7×7 heatmap</h4><p>Redimensionne 7×7 → 224×224 avec Lanczos + colormap inferno</p></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     25 — TFLITE & EDGE COMPUTING
+════════════════════════════════════════════════ -->
+<div class="slide">
+  <div class="chip b">Fiche Technique</div>
+  <h2><em class="b">TFLite</em> &amp; Edge Computing — Deploiement terrain</h2>
+  <div class="row" style="max-width:1020px;align-items:flex-start;">
+    <div class="col" style="flex:1;">
+      <div class="card blue">
+        <h3>TFLite — TensorFlow Lite</h3>
+        <p>Version allegee de TensorFlow pour mobile, Raspberry Pi, microcontroleurs. Deux optimisations principales :</p>
+        <p style="margin-top:8px;"><strong style="color:#fff;">Quantification int8 :</strong> float32 (4 octets) → int8 (1 octet) = 4x moins de memoire, 2x plus rapide</p>
+        <p style="margin-top:6px;"><strong style="color:#fff;">Notre modele :</strong> fire_model.keras (~9 Mo) → TFLite quantifie (~2,2 Mo)</p>
+      </div>
+      <div class="card">
+        <h3>Comparaison des vitesses d'inference</h3>
+        <div class="bar-row" style="margin-top:8px;">
+          <span class="bar-lbl" style="width:130px;">Keras (CPU)</span>
+          <div class="bar-track"><div class="bar-fill" style="width:80%"></div></div>
+          <span class="bar-val">~100 ms</span>
+        </div>
+        <div class="bar-row">
+          <span class="bar-lbl" style="width:130px;">TFLite (CPU)</span>
+          <div class="bar-track"><div class="bar-fill" style="width:60%"></div></div>
+          <span class="bar-val">~50 ms</span>
+        </div>
+        <div class="bar-row">
+          <span class="bar-lbl" style="width:130px;">Jetson Nano GPU</span>
+          <div class="bar-track"><div class="bar-fill g" style="width:35%"></div></div>
+          <span class="bar-val">~35 ms</span>
+        </div>
+        <div class="bar-row">
+          <span class="bar-lbl" style="width:130px;">Coral TPU</span>
+          <div class="bar-track"><div class="bar-fill g" style="width:7%"></div></div>
+          <span class="bar-val">~7 ms</span>
+        </div>
+      </div>
+    </div>
+    <div class="col" style="flex:1;gap:14px;">
+      <div class="card fire">
+        <h3>NVIDIA Jetson Nano — Scenario F</h3>
+        <p><strong style="color:#fff;">GPU :</strong> 128 cores Maxwell @ 921 MHz</p>
+        <p><strong style="color:#fff;">CPU :</strong> 4-core ARM A57 @ 1,43 GHz</p>
+        <p><strong style="color:#fff;">RAM :</strong> 4 Go LPDDR4</p>
+        <p><strong style="color:#fff;">Conso :</strong> 5W (eco) / 10W (max)</p>
+        <p><strong style="color:#fff;">Prix :</strong> ~100 € — ideal pour zone blanche</p>
+      </div>
+      <div class="card safe">
+        <h3>Google Coral TPU — Ultra-basse consommation</h3>
+        <p><strong style="color:#fff;">Perfs :</strong> 4 TOPS (tera-operations/seconde)</p>
+        <p><strong style="color:#fff;">Conso :</strong> 2W TX — fonctionne a l'energie solaire seule</p>
+        <p><strong style="color:#fff;">Contrainte :</strong> necessite un modele TFLite int8 quantifie</p>
+        <p><strong style="color:#fff;">Prix :</strong> ~60 € (USB Accelerator) — le moins cher du marche</p>
+      </div>
+      <div class="card">
+        <h3>Critere de choix</h3>
+        <p>Si budget limite et energie rare → <strong style="color:var(--safe);">Coral TPU</strong> (2W, 7 ms). Si puissance de calcul necessaire → <strong style="color:var(--fire);">Jetson Nano</strong> (10W, 35 ms, support Python complet).</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     26 — LORAWAN + 5G + STARLINK
+════════════════════════════════════════════════ -->
+<div class="slide">
+  <div class="chip b">Fiche Technique</div>
+  <h2><em class="b">LoRaWAN</em> + <em class="b">5G</em> + <em class="b">Starlink</em> — Connectivite terrain</h2>
+  <div class="row" style="max-width:1020px;align-items:flex-start;">
+    <div class="col" style="flex:1.1;">
+      <div class="card fire">
+        <h3>LoRaWAN — L'alerte critique</h3>
+        <p><strong style="color:#fff;">Long Range Wide Area Network</strong> — modulation CSS (Chirp Spread Spectrum) tres resistante aux interferences.</p>
+        <div class="steps" style="gap:5px;margin-top:8px;">
+          <div class="step" style="padding:7px 11px;"><div class="step-num" style="width:20px;height:20px;font-size:10px;">&#9632;</div><div class="step-body"><h4>Portee</h4><p>2-5 km urbain, 10-15 km rural terrain degage</p></div></div>
+          <div class="step" style="padding:7px 11px;"><div class="step-num" style="width:20px;height:20px;font-size:10px;">&#9632;</div><div class="step-body"><h4>Consommation</h4><p>&lt; 50 mW en emission, &lt; 1 mW en veille — batterie &gt; 1 an</p></div></div>
+          <div class="step" style="padding:7px 11px;"><div class="step-num" style="width:20px;height:20px;font-size:10px;">&#9632;</div><div class="step-body"><h4>Debit</h4><p>250 bps – 5,5 kbps — suffisant pour {"class":"fire","conf":0.98,"lat":43.2}</p></div></div>
+          <div class="step" style="padding:7px 11px;"><div class="step-num" style="width:20px;height:20px;font-size:10px;">&#9632;</div><div class="step-body"><h4>Frequence</h4><p>868 MHz Europe (bande ISM libre) — penetration en zone boisee</p></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="col" style="flex:.9;gap:14px;">
+      <div class="card blue">
+        <h3>5G URLLC — La levee de doute</h3>
+        <p><strong style="color:#fff;">Latence :</strong> &lt; 10 ms (slice URLLC)</p>
+        <p><strong style="color:#fff;">Debit :</strong> 100 Mbps – 10 Gbps</p>
+        <p><strong style="color:#fff;">Usage :</strong> streaming video 4K pour confirmation visuelle par operateur humain uniquement apres alerte LoRa</p>
+      </div>
+      <div class="card">
+        <h3>Starlink — Zone blanche totale</h3>
+        <p><strong style="color:#fff;">Latence :</strong> 25-60 ms (constellation LEO a 550 km)</p>
+        <p><strong style="color:#fff;">Debit :</strong> 50-300 Mbps</p>
+        <p><strong style="color:#fff;">Kit :</strong> antenne 30W, IP56, auto-pointage</p>
+        <p><strong style="color:#fff;">Couverture :</strong> quasi-mondiale incluant montagne et forets isolees</p>
+      </div>
+      <div class="card safe">
+        <h3>Architecture complementaire</h3>
+        <p style="font-family:monospace;font-size:12px;line-height:2;color:#aaa;">
+          Detection feu (modele local)<br>
+          &nbsp;&nbsp;├─ <span style="color:var(--fire);">LoRa</span> → Centrale alerte &nbsp;<span style="color:var(--mute);">(&lt; 1 s)</span><br>
+          &nbsp;&nbsp;└─ <span style="color:#42a5f5;">5G/Starlink</span> → Operateur &nbsp;<span style="color:var(--mute);">(video)</span>
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     27 — FORESTHWATCH — AUSTRALIE
+════════════════════════════════════════════════ -->
+<div class="slide">
+  <div class="chip fire">Concurrent — Australie</div>
+  <h2><em>ForestWatch</em> — Australie</h2>
+  <div class="pv">
+    <div class="pv-item" style="border-color:rgba(255,87,34,.35);">
+      <strong>Cameras sur tours de 54 m</strong>
+      <span>Detection a plus de 20 km en terrain plat — avant meme les satellites. Cameras PTZ 4K avec balayage automatique toutes les 30 secondes.</span>
+    </div>
+    <div class="pv-item" style="border-color:rgba(0,230,118,.3);">
+      <strong>Alerte pre-satellite</strong>
+      <span>Les satellites d'observation mettent 15 a 90 minutes a repasser sur une zone. Une camera fixe detecte en quelques secondes — avantage decisif pour l'evacuation.</span>
+    </div>
+    <div class="pv-item">
+      <strong>Contexte : Black Summer 2019-2020</strong>
+      <span>18,6 millions d'hectares brules. L'Australie a investi massivement dans les systemes de detection precoce — ForestWatch est le resultat direct.</span>
+    </div>
+  </div>
+  <div class="dv">
+    <div class="row" style="max-width:1020px;align-items:flex-start;">
+      <div class="col" style="flex:1.1;">
+        <div class="card fire">
+          <h3>Principe</h3>
+          <p>Cameras haute resolution <strong style="color:#fff;">panoramiques 360°</strong> installees sur des tours en acier de <strong style="color:#fff;">54 metres</strong> en terrain plat. Balayage automatique toutes les 30 secondes. Detection de fumee a <strong style="color:#fff;">plus de 20 km</strong>.</p>
+        </div>
+        <div class="card">
+          <h3>Technologies utilisees</h3>
+          <div class="tags" style="margin-top:6px;">
+            <span class="tag fire">PTZ cameras 4K</span>
+            <span class="tag">Vision IR nocturne</span>
+            <span class="tag b">Fibre optique</span>
+            <span class="tag safe">IA CNN embarquee</span>
+            <span class="tag">Liaison radio 4G</span>
+          </div>
+        </div>
+        <div class="card safe">
+          <h3>Avantage cle</h3>
+          <p>Detection <strong style="color:#fff;">avant les satellites</strong>. Les satellites d'observation mettent 15-90 minutes a repasser sur une zone. Une camera fixe surveille en permanence et alerte en quelques secondes.</p>
+        </div>
+      </div>
+      <div class="col" style="flex:.9;gap:12px;">
+        <div class="row" style="gap:12px;">
+          <div class="stat" style="flex:1;border-color:rgba(255,87,34,.35);">
+            <div class="stat-label">Portee detection</div>
+            <div class="stat-val" style="font-size:40px;">20+</div>
+            <div class="stat-sub">kilometres</div>
+          </div>
+          <div class="stat" style="flex:1;border-color:rgba(66,165,245,.3);">
+            <div class="stat-label">Hauteur tour</div>
+            <div class="stat-val b" style="font-size:40px;">54</div>
+            <div class="stat-sub">metres</div>
+          </div>
+        </div>
+        <div class="card blue">
+          <h3>Comparaison avec notre projet</h3>
+          <p><strong style="color:#fff;">Similaire :</strong> detection d'incendie par vision artificielle, CNN, heatmap d'activation.</p>
+          <p style="margin-top:8px;"><strong style="color:var(--fire);">Difference :</strong> infrastructure lourde (54m, 4K PTZ) vs notre approche legere MobileNetV2 deployable sur camera standard.</p>
+        </div>
+        <div class="card">
+          <h3>Contexte Australie</h3>
+          <p>Saison des feux 2019-2020 (Black Summer) : <strong style="color:#fff;">18,6 millions d'hectares</strong> brules. Investissement massif dans les systemes de detection precoce.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     28 — SASKATCHEWAN — CANADA
+════════════════════════════════════════════════ -->
+<div class="slide">
+  <div class="chip b">Concurrent — Canada</div>
+  <h2><em>Saskatchewan</em> — Canada</h2>
+  <div class="pv">
+    <div class="pv-item" style="border-color:rgba(66,165,245,.35);">
+      <strong>Tours de guet reconverties (15-25 m)</strong>
+      <span>Anciennes tours forestieres provinciales equipees de cameras IA — recyclage d'infrastructure existante, investissement minimal.</span>
+    </div>
+    <div class="pv-item" style="border-color:rgba(0,230,118,.3);">
+      <strong>-18 minutes de temps d'intervention</strong>
+      <span>La detection automatisee reduit le delai moyen entre l'eclosion et l'arrivee des premiers pompiers — chaque minute compte.</span>
+    </div>
+    <div class="pv-item">
+      <strong>Defi : grand froid (-30°C)</strong>
+      <span>Boitiers chauffes, joints hermetiques IP67, anticondensat. Les composants electroniques doivent fonctionner par temperatures arctiques.</span>
+    </div>
+  </div>
+  <div class="dv">
+    <div class="row" style="max-width:1020px;align-items:flex-start;">
+      <div class="col" style="flex:1.1;">
+        <div class="card blue">
+          <h3>Approche Saskatchewan</h3>
+          <p>Conversion des anciennes <strong style="color:#fff;">tours de guet forestieres</strong> (15-25 m) en stations de detection IA automatisees. La province possedait deja un reseau de tours — la modernisation evite la construction de nouvelles infrastructures.</p>
+        </div>
+        <div class="card">
+          <h3>Pipeline technique</h3>
+          <div class="steps" style="gap:6px;margin-top:6px;">
+            <div class="step" style="padding:9px 12px;"><div class="step-num">1</div><div class="step-body"><h4>Camera thermique + visible</h4><p>Combine spectre visible et IR thermique pour detection par toutes conditions meteorologiques</p></div></div>
+            <div class="step" style="padding:9px 12px;"><div class="step-num">2</div><div class="step-body"><h4>Edge computing embarque</h4><p>Traitement IA local (pas de cloud) — critique en zone blanche et par mauvais temps</p></div></div>
+            <div class="step" style="padding:9px 12px;"><div class="step-num">3</div><div class="step-body"><h4>LoRa → centrale provinciale</h4><p>Alerte en moins de 1 seconde meme sans 4G/5G via reseau LoRaWAN 868 MHz</p></div></div>
+          </div>
+        </div>
+      </div>
+      <div class="col" style="flex:.9;gap:12px;">
+        <div class="row" style="gap:12px;">
+          <div class="stat" style="flex:1;border-color:rgba(0,230,118,.35);">
+            <div class="stat-label">Reduction delai</div>
+            <div class="stat-val g" style="font-size:40px;">-18</div>
+            <div class="stat-sub">minutes</div>
+          </div>
+          <div class="stat" style="flex:1;border-color:rgba(66,165,245,.3);">
+            <div class="stat-label">Hauteur tours</div>
+            <div class="stat-val b" style="font-size:40px;">25</div>
+            <div class="stat-sub">metres max</div>
+          </div>
+        </div>
+        <div class="card fire">
+          <h3>Defi climatique</h3>
+          <p>Temperatures de <strong style="color:#fff;">-30°C</strong> en hiver. Les composants electroniques doivent etre proteges : boitiers chauffes, joints hermetiques IP67, anticondensat.</p>
+        </div>
+        <div class="card safe">
+          <h3>Comparaison avec notre projet</h3>
+          <p><strong style="color:#fff;">Point commun :</strong> architecture MobileNet-like pour edge computing, LoRa comme canal d'alerte.</p>
+          <p style="margin-top:8px;"><strong style="color:var(--safe);">Atout commun :</strong> Recall 100 % — zero incendie manque, critere prioritaire en Canada aussi.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     29 — FIRELOC — ETATS-UNIS
+════════════════════════════════════════════════ -->
+<div class="slide">
+  <div class="chip g">Concurrent — Etats-Unis</div>
+  <h2><em>FireLoc</em> — Etats-Unis</h2>
+  <div class="pv">
+    <div class="pv-item" style="border-color:rgba(0,230,118,.35);">
+      <strong>Maillage dense a faible hauteur (~9 m)</strong>
+      <span>Beaucoup de capteurs peu eleves plutot que quelques tours tres hautes — approche "maillage urbain" sur poteaux et toits.</span>
+    </div>
+    <div class="pv-item" style="border-color:rgba(255,87,34,.3);">
+      <strong>Zone WUI — Interface Urbaine-Forestiere</strong>
+      <span>La Californie compte 11 millions de personnes vivant en zone WUI. L'incendie de Paradise (2018) a tue 85 personnes en 1h30.</span>
+    </div>
+    <div class="pv-item">
+      <strong>Notre atout face a FireLoc</strong>
+      <span>Traitement 100 % local avec Grad-CAM explicable. FireLoc depend du cloud — pas de traitement offline possible.</span>
+    </div>
+  </div>
+  <div class="dv">
+    <div class="row" style="max-width:1020px;align-items:flex-start;">
+      <div class="col" style="flex:1.1;">
+        <div class="card safe">
+          <h3>Concept : maillage plutot que hauteur</h3>
+          <p>Philosophie opposee a ForestWatch : au lieu d'une tour haute avec longue portee, FireLoc deploie de <strong style="color:#fff;">nombreuses cameras a ~9 m</strong> (poteaux, toits) pour mailler la zone. La redundance compense la faible portee unitaire.</p>
+        </div>
+        <div class="card">
+          <h3>Zone cible : WUI (Wildland-Urban Interface)</h3>
+          <p>La Californie compte <strong style="color:#fff;">11 millions de personnes</strong> vivant dans des zones WUI. L'incendie de Paradise (2018) a tue 85 personnes en 1h30. FireLoc cible specifiquement cette interface.</p>
+        </div>
+        <div class="card blue">
+          <h3>Architecture cloud-based</h3>
+          <p>Les cameras envoient des frames au cloud (AWS/GCP) qui traite via un CNN. Avantage : modeles plus gros et precis. Inconvenient : depend du reseau, pas de traitement offline possible.</p>
+        </div>
+      </div>
+      <div class="col" style="flex:.9;gap:12px;">
+        <div class="row" style="gap:12px;">
+          <div class="stat" style="flex:1;border-color:rgba(0,230,118,.35);">
+            <div class="stat-label">Hauteur camera</div>
+            <div class="stat-val g" style="font-size:40px;">~9</div>
+            <div class="stat-sub">metres</div>
+          </div>
+          <div class="stat" style="flex:1;border-color:rgba(255,87,34,.3);">
+            <div class="stat-label">Pop. WUI USA</div>
+            <div class="stat-val" style="font-size:36px;">70M</div>
+            <div class="stat-sub">personnes exposees</div>
+          </div>
+        </div>
+        <div class="card fire">
+          <h3>Comparaison avec notre projet</h3>
+          <p><strong style="color:#fff;">Similaire :</strong> CNN pour classification feu/non-feu, transfer learning.</p>
+          <p style="margin-top:8px;"><strong style="color:var(--fire);">Notre atout :</strong> traitement 100 % local, pas de dependance cloud, fonctionne en zone blanche.</p>
+          <p style="margin-top:6px;"><strong style="color:var(--safe);">Grad-CAM</strong> ajoute une explicabilite qu'un systeme black-box cloud ne fournit pas.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     30 — TABLEAU COMPARATIF
+════════════════════════════════════════════════ -->
+<div class="slide">
+  <div class="chip b">Synthese</div>
+  <h2>Tableau <em class="b">Comparatif</em> — Systemes mondiaux</h2>
+  <div class="pv">
+    <div class="pv-item" style="border-color:rgba(0,230,118,.3);">
+      <strong>Notre projet — 99 % accuracy, 0 faux negatif</strong>
+      <span>MobileNetV2 leger, deployable localement sans cloud, Grad-CAM explicable — s'integre dans n'importe quel systeme.</span>
+    </div>
+    <div class="pv-item">
+      <strong>3 approches mondiales differentes</strong>
+      <span>ForestWatch (AU) : portee maximale depuis tours hautes. Saskatchewan (CA) : reconversion d'infrastructure. FireLoc (US) : maillage dense en zone urbaine.</span>
+    </div>
+    <div class="pv-item" style="border-color:rgba(255,87,34,.3);">
+      <strong>Complement, pas competition</strong>
+      <span>Chaque approche repond a un contexte geographique et budgetaire different. Notre modele peut s'integrer comme composant IA dans n'importe laquelle.</span>
+    </div>
+  </div>
+  <div class="dv">
+    <div style="width:100%;max-width:1020px;">
+      <table style="width:100%;border-collapse:collapse;font-size:13px;">
+        <thead>
+          <tr>
+            <th style="padding:10px 14px;text-align:left;border-bottom:1px solid var(--bord);color:var(--mute);font-size:11px;text-transform:uppercase;letter-spacing:.8px;">Projet</th>
+            <th style="padding:10px 14px;text-align:center;border-bottom:1px solid var(--bord);color:var(--mute);font-size:11px;text-transform:uppercase;letter-spacing:.8px;">Hauteur</th>
+            <th style="padding:10px 14px;text-align:center;border-bottom:1px solid var(--bord);color:var(--mute);font-size:11px;text-transform:uppercase;letter-spacing:.8px;">Portee</th>
+            <th style="padding:10px 14px;text-align:center;border-bottom:1px solid var(--bord);color:var(--mute);font-size:11px;text-transform:uppercase;letter-spacing:.8px;">IA</th>
+            <th style="padding:10px 14px;text-align:center;border-bottom:1px solid var(--bord);color:var(--mute);font-size:11px;text-transform:uppercase;letter-spacing:.8px;">Connectivite</th>
+            <th style="padding:10px 14px;text-align:left;border-bottom:1px solid var(--bord);color:var(--mute);font-size:11px;text-transform:uppercase;letter-spacing:.8px;">Atout cle</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style="background:rgba(0,230,118,.05);">
+            <td style="padding:11px 14px;border-bottom:1px solid rgba(255,255,255,.04);"><strong style="color:var(--safe);">Notre projet</strong></td>
+            <td style="padding:11px 14px;border-bottom:1px solid rgba(255,255,255,.04);text-align:center;color:#aaa;">Variable</td>
+            <td style="padding:11px 14px;border-bottom:1px solid rgba(255,255,255,.04);text-align:center;color:#aaa;">Locale</td>
+            <td style="padding:11px 14px;border-bottom:1px solid rgba(255,255,255,.04);text-align:center;color:#aaa;">MobileNetV2</td>
+            <td style="padding:11px 14px;border-bottom:1px solid rgba(255,255,255,.04);text-align:center;color:#aaa;">Flask / LoRa</td>
+            <td style="padding:11px 14px;border-bottom:1px solid rgba(255,255,255,.04);color:var(--safe);">99 % acc. · Grad-CAM · 0 FN · local</td>
+          </tr>
+          <tr>
+            <td style="padding:11px 14px;border-bottom:1px solid rgba(255,255,255,.04);"><strong style="color:var(--fire);">ForestWatch (AU)</strong></td>
+            <td style="padding:11px 14px;border-bottom:1px solid rgba(255,255,255,.04);text-align:center;color:var(--fire);">54 m</td>
+            <td style="padding:11px 14px;border-bottom:1px solid rgba(255,255,255,.04);text-align:center;color:var(--fire);">20+ km</td>
+            <td style="padding:11px 14px;border-bottom:1px solid rgba(255,255,255,.04);text-align:center;color:#aaa;">CNN PTZ 4K</td>
+            <td style="padding:11px 14px;border-bottom:1px solid rgba(255,255,255,.04);text-align:center;color:#aaa;">Fibre / 4G</td>
+            <td style="padding:11px 14px;border-bottom:1px solid rgba(255,255,255,.04);color:#aaa;">Detection pre-satellite</td>
+          </tr>
+          <tr style="background:rgba(66,165,245,.04);">
+            <td style="padding:11px 14px;border-bottom:1px solid rgba(255,255,255,.04);"><strong style="color:#42a5f5;">Saskatchewan (CA)</strong></td>
+            <td style="padding:11px 14px;border-bottom:1px solid rgba(255,255,255,.04);text-align:center;color:#42a5f5;">15-25 m</td>
+            <td style="padding:11px 14px;border-bottom:1px solid rgba(255,255,255,.04);text-align:center;color:#aaa;">Regionale</td>
+            <td style="padding:11px 14px;border-bottom:1px solid rgba(255,255,255,.04);text-align:center;color:#aaa;">CNN Edge</td>
+            <td style="padding:11px 14px;border-bottom:1px solid rgba(255,255,255,.04);text-align:center;color:#aaa;">LoRa + 4G</td>
+            <td style="padding:11px 14px;border-bottom:1px solid rgba(255,255,255,.04);color:#aaa;">-18 min intervention · infra existante</td>
+          </tr>
+          <tr>
+            <td style="padding:11px 14px;"><strong style="color:var(--safe);">FireLoc (US)</strong></td>
+            <td style="padding:11px 14px;text-align:center;color:var(--safe);">~9 m</td>
+            <td style="padding:11px 14px;text-align:center;color:#aaa;">Locale dense</td>
+            <td style="padding:11px 14px;text-align:center;color:#aaa;">CNN Cloud</td>
+            <td style="padding:11px 14px;text-align:center;color:#aaa;">5G / WiFi</td>
+            <td style="padding:11px 14px;color:#aaa;">Maillage WUI · couverture urbaine</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card safe" style="max-width:1020px;margin-top:14px;text-align:left;">
+      <h3>Position de notre projet</h3>
+      <p>Notre modele MobileNetV2 est concu pour etre <strong style="color:#fff;">leger, explicable et deployable localement</strong>. Il peut s'integrer comme composant de detection IA dans n'importe lequel de ces systemes.</p>
+    </div>
+  </div>
+</div>
+
+<div class="nav">
+  <button class="nbtn" id="bprev" onclick="go(cur-1)">&#8592;</button>
+  <div class="dots" id="dots"></div>
+  <button class="nbtn" id="bnext" onclick="go(cur+1)">&#8594;</button>
+</div>
+<div class="ctr" id="ctr">1 / 26</div>
+
+</div><!-- #stage -->
+
+<script>
+const TOTAL = 30;
+let cur = 0;
+
+// ─── Auto-wrap existing slides into .dv + build .pv summaries ────────
+document.querySelectorAll('.slide').forEach(slide => {
+  // Skip slides that already have explicit .pv / .dv (competitor slides)
+  if (slide.querySelector(':scope > .pv') || slide.querySelector(':scope > .dv')) return;
+
+  const children = Array.from(slide.children);
+
+  // Keep chip, h1, h2 in place; move everything else into .dv
+  const dv = document.createElement('div');
+  dv.className = 'dv';
+  children.forEach(c => {
+    if (!c.classList.contains('chip') && c.tagName !== 'H1' && c.tagName !== 'H2') {
+      dv.appendChild(c);
+    }
+  });
+  slide.appendChild(dv);
+
+  // Build .pv: extract key points from cards inside .dv
+  const pv = document.createElement('div');
+  pv.className = 'pv';
+
+  const extracted = [];
+
+  // Try cards first
+  dv.querySelectorAll('.card').forEach((el, i) => {
+    if (i >= 4) return;
+    const h3 = el.querySelector('h3');
+    const p  = el.querySelector('p');
+    if (!h3) return;
+    const item = document.createElement('div');
+    item.className = 'pv-item';
+    const txt = p ? p.textContent.slice(0, 120) + (p.textContent.length > 120 ? '\u2026' : '') : '';
+    item.innerHTML = '<strong>' + h3.textContent + '</strong>' + (txt ? '<span>' + txt + '</span>' : '');
+    extracted.push(item);
+  });
+
+  // Fallback: use stats
+  if (extracted.length === 0) {
+    dv.querySelectorAll('.stat').forEach((el, i) => {
+      if (i >= 3) return;
+      const val = el.querySelector('.stat-val');
+      const lbl = el.querySelector('.stat-label');
+      const sub = el.querySelector('.stat-sub');
+      if (!val) return;
+      const item = document.createElement('div');
+      item.className = 'pv-item';
+      item.innerHTML = '<span class="pv-big">' + val.textContent + '</span>' +
+        '<strong style="font-size:14px;margin-top:4px;">' + (lbl ? lbl.textContent : '') + '</strong>' +
+        (sub ? '<span>' + sub.textContent + '</span>' : '');
+      extracted.push(item);
+    });
+  }
+
+  extracted.forEach(item => pv.appendChild(item));
+  slide.insertBefore(pv, dv);
+});
+
+// ─── Build dots ───────────────────────────────────────────────────────
+const dotsEl = document.getElementById('dots');
+for (let i = 0; i < TOTAL; i++) {
+  const d = document.createElement('div');
+  d.className = 'dot' + (i === 0 ? ' on' : '');
+  d.onclick = () => go(i);
+  dotsEl.appendChild(d);
+}
+
+// ─── Navigation ───────────────────────────────────────────────────────
+function go(n) {
+  if (n < 0 || n >= TOTAL) return;
+  const slides = document.querySelectorAll('.slide');
+  slides[cur].classList.remove('active');
+  slides[cur].classList.add('exiting');
+  const prev = cur;
+  setTimeout(() => slides[prev].classList.remove('exiting'), 300);
+  cur = n;
+  slides[cur].classList.add('active');
+  document.querySelectorAll('.dot').forEach((d, i) => d.classList.toggle('on', i === cur));
+  document.getElementById('ctr').textContent = (cur + 1) + ' / ' + TOTAL;
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ') go(cur + 1);
+  if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')  go(cur - 1);
+});
+
+// ─── View toggle ──────────────────────────────────────────────────────
+let currentView = 'dv';
+
+function setView(v) {
+  currentView = v;
+  document.querySelectorAll('.slide').forEach(s => s.classList.toggle('show-pv', v === 'pv'));
+  document.getElementById('tabDv').classList.toggle('on', v === 'dv');
+  document.getElementById('tabPv').classList.toggle('on', v === 'pv');
+}
+
+// ─── Scale #stage to fit viewport (16:9) ─────────────────────────────
+const stage = document.getElementById('stage');
+function resize() {
+  const sx = window.innerWidth  / 1280;
+  const sy = window.innerHeight / 720;
+  const s  = Math.min(sx, sy);
+  stage.style.transform = `scale(${s})`;
+  stage.style.position = 'absolute';
+  stage.style.left = ((window.innerWidth  - 1280) / 2) + 'px';
+  stage.style.top  = ((window.innerHeight - 720)  / 2) + 'px';
+}
+window.addEventListener('resize', resize);
+resize();
+</script>
+</body>
+</html>

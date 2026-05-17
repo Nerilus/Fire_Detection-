@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Detection d'Incendie — AI</title>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg:       #09090f;
+      --surface:  rgba(18, 18, 30, 0.92);
+      --border:   rgba(255,255,255,0.08);
+      --fire:     #ff5722;
+      --fire-dim: rgba(255,87,34,0.22);
+      --safe:     #00e676;
+      --safe-dim: rgba(0,230,118,0.16);
+      --txt:      #ececec;
+      --muted:    #555;
+      --r:        14px;
+    }
+
+    body {
+      min-height: 100vh;
+      background: var(--bg);
+      background-image:
+        radial-gradient(ellipse 80% 40% at 50% 0%,   rgba(255,87,34,.06) 0%, transparent 70%),
+        radial-gradient(ellipse 60% 30% at 80% 100%, rgba(30,60,200,.04) 0%, transparent 70%);
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      color: var(--txt);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2.5rem 1.5rem 5rem;
+    }
+
+    /* HEADER */
+    header { text-align: center; margin-bottom: 2.5rem; }
+    header h1 {
+      font-size: clamp(1.8rem, 5vw, 2.8rem);
+      font-weight: 800;
+      letter-spacing: -1px;
+      background: linear-gradient(120deg, #ff9040, #ff5722, #ffd600);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    header p { color: var(--muted); font-size: .9rem; margin-top: .4rem; }
+
+    /* CARD */
+    .card {
+      width: 100%; max-width: 700px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      backdrop-filter: blur(14px);
+      padding: 2rem;
+    }
+
+    /* DROP ZONE */
+    #dropZone {
+      border: 2px dashed var(--border);
+      border-radius: 10px;
+      padding: 2.5rem 1.5rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .25s, background .25s, transform .2s;
+    }
+    #dropZone:hover, #dropZone.over {
+      border-color: rgba(255,87,34,.55);
+      background: rgba(255,87,34,.04);
+      transform: translateY(-2px);
+    }
+    .drop-icon { font-size: 3rem; display: block; margin-bottom: .8rem; }
+    #dropZone h2 { font-size: 1.05rem; font-weight: 600; margin-bottom: .3rem; }
+    #dropZone small { color: var(--muted); font-size: .82rem; }
+    .btn-browse {
+      display: inline-block; margin-top: 1rem;
+      padding: .6rem 1.8rem;
+      background: linear-gradient(135deg, #ff7043, #ff5722);
+      color: #fff; border: none; border-radius: 8px;
+      font-size: .9rem; font-weight: 600; cursor: pointer;
+      transition: opacity .2s;
+    }
+    .btn-browse:hover { opacity: .82; }
+
+    /* SPINNER */
+    #spinner {
+      display: none; width: 44px; height: 44px;
+      border: 3px solid rgba(255,255,255,.08);
+      border-top-color: var(--fire);
+      border-radius: 50%;
+      animation: spin .75s linear infinite;
+      margin: 1.5rem auto;
+    }
+    #spinner.on { display: block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ERROR */
+    #errorMsg {
+      display: none; margin-top: 1.2rem;
+      padding: .75rem 1.1rem;
+      background: rgba(244,67,54,.1);
+      border: 1px solid rgba(244,67,54,.35);
+      color: #ef5350; border-radius: 8px; font-size: .88rem;
+    }
+    #errorMsg.on { display: block; }
+
+    /* RESULT */
+    #result { display: none; margin-top: 1.8rem; }
+    #result.on { display: block; }
+
+    /* Top section: image + prediction */
+    .top-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+      align-items: center;
+    }
+    @media (max-width: 480px) { .top-grid { grid-template-columns: 1fr; } }
+
+    .img-box {
+      position: relative;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .img-box img {
+      width: 100%; aspect-ratio: 1;
+      object-fit: cover; display: block;
+    }
+    .img-label {
+      position: absolute; bottom: 0; left: 0; right: 0;
+      background: rgba(0,0,0,.55);
+      text-align: center;
+      font-size: .72rem;
+      letter-spacing: .8px;
+      text-transform: uppercase;
+      padding: .3rem;
+      color: rgba(255,255,255,.75);
+    }
+
+    /* Prediction info */
+    .pred-info { display: flex; flex-direction: column; gap: .9rem; }
+
+    .badge {
+      display: inline-flex; align-items: center; gap: .5rem;
+      padding: .5rem 1.1rem; border-radius: 50px;
+      font-size: 1rem; font-weight: 700; width: fit-content;
+    }
+    .badge.fire {
+      background: var(--fire-dim); border: 2px solid var(--fire); color: #ff7043;
+      animation: glow 2s ease-in-out infinite;
+    }
+    .badge.safe { background: var(--safe-dim); border: 2px solid var(--safe); color: var(--safe); }
+    @keyframes glow {
+      0%,100% { box-shadow: 0 0 12px rgba(255,87,34,.3); }
+      50%      { box-shadow: 0 0 30px rgba(255,87,34,.6), 0 0 50px rgba(255,87,34,.15); }
+    }
+
+    .conf-label { font-size: .72rem; text-transform: uppercase; letter-spacing: 1.2px; color: var(--muted); }
+    .conf-value { font-size: 2.8rem; font-weight: 800; line-height: 1.1; }
+    .conf-value.fire { color: var(--fire); }
+    .conf-value.safe { color: var(--safe); }
+
+    .bar-track { height: 7px; background: rgba(255,255,255,.07); border-radius: 4px; overflow: hidden; }
+    .bar-fill { height: 100%; border-radius: 4px; width: 0; transition: width .9s cubic-bezier(.4,0,.2,1); }
+    .bar-fill.fire { background: linear-gradient(90deg, #ff5722, #ffd600); }
+    .bar-fill.safe { background: linear-gradient(90deg, #00e676, #69f0ae); }
+
+    .detail { font-size: .78rem; color: var(--muted); }
+
+    /* GRAD-CAM SECTION */
+    .gradcam-sep {
+      margin: 1.6rem 0 1rem;
+      border: none;
+      border-top: 1px solid var(--border);
+    }
+
+    .btn-gradcam {
+      display: flex; align-items: center; gap: .5rem;
+      background: none; border: 1px solid var(--border);
+      color: var(--muted); border-radius: 8px;
+      padding: .5rem 1.1rem; font-size: .85rem; cursor: pointer;
+      transition: border-color .2s, color .2s;
+      width: 100%; justify-content: center;
+    }
+    .btn-gradcam:hover { border-color: rgba(255,255,255,.25); color: var(--txt); }
+    .btn-gradcam .arrow { transition: transform .25s; display: inline-block; }
+    .btn-gradcam.open .arrow { transform: rotate(180deg); }
+
+    #gradcamPanel {
+      display: none;
+      margin-top: 1.2rem;
+    }
+    #gradcamPanel.on { display: block; }
+
+    .gradcam-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+    @media (max-width: 480px) { .gradcam-grid { grid-template-columns: 1fr; } }
+
+    .gradcam-desc {
+      margin-top: .9rem;
+      font-size: .78rem;
+      color: var(--muted);
+      line-height: 1.5;
+      text-align: center;
+    }
+    .gradcam-desc strong { color: rgba(255,255,255,.5); }
+
+    /* Reset */
+    .btn-reset {
+      display: block; width: fit-content; margin: 1.5rem auto 0;
+      padding: .5rem 1.6rem; background: transparent;
+      border: 1px solid var(--border); color: var(--muted);
+      border-radius: 8px; font-size: .85rem; cursor: pointer;
+      transition: border-color .2s, color .2s;
+    }
+    .btn-reset:hover { border-color: rgba(255,255,255,.25); color: var(--txt); }
+
+    /* FOOTER */
+    footer { margin-top: 2.2rem; font-size: .72rem; color: #2a2a2a; text-align: center; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Detection d'Incendie</h1>
+  <p>MobileNetV2 &mdash; Transfer Learning &mdash; Precision : 99 %</p>
+</header>
+
+<div class="card">
+
+  <!-- Zone de depot -->
+  <div id="dropZone">
+    <span class="drop-icon">&#128293;</span>
+    <h2>Glissez une image ici</h2>
+    <button class="btn-browse" onclick="document.getElementById('fileInput').click()">
+      Parcourir les fichiers
+    </button>
+    <input type="file" id="fileInput" accept="image/*" style="display:none">
+  </div>
+
+  <div id="spinner"></div>
+  <div id="errorMsg"></div>
+
+  <!-- Resultat -->
+  <div id="result">
+
+    <!-- Prediction -->
+    <div class="top-grid">
+      <div class="img-box">
+        <img id="previewImg" src="" alt="Image analysee">
+        <span class="img-label">Image originale</span>
+      </div>
+      <div class="pred-info" id="predInfo"></div>
+    </div>
+
+    <!-- Grad-CAM (toggle) -->
+    <hr class="gradcam-sep">
+
+    <button class="btn-gradcam" id="btnGradcam" onclick="toggleGradcam()">
+      <span>&#128065;</span>
+      <span id="gradcamBtnText">Afficher Grad-CAM</span>
+      <span class="arrow">&#8964;</span>
+    </button>
+
+    <div id="gradcamPanel">
+      <div class="gradcam-grid">
+        <div class="img-box">
+          <img id="origSmall" src="" alt="Originale">
+          <span class="img-label">Originale</span>
+        </div>
+        <div class="img-box">
+          <img id="gradcamImg" src="" alt="Grad-CAM">
+          <span class="img-label">Grad-CAM (zones actives)</span>
+        </div>
+      </div>
+      <p class="gradcam-desc">
+        La carte Grad-CAM met en evidence les regions de l'image qui ont le plus
+        influence la prediction. Les zones <strong>claires / jaunes</strong>
+        correspondent aux pixels les plus determinants.
+      </p>
+    </div>
+
+    <button class="btn-reset" onclick="resetUI()">Analyser une autre image</button>
+  </div>
+
+</div>
+
+<footer>MobileNetV2 &bull; TensorFlow 2.21 &bull; Grad-CAM &bull; Binary Classification</footer>
+
+<script>
+  const dropZone   = document.getElementById('dropZone');
+  const fileInput  = document.getElementById('fileInput');
+  const spinner    = document.getElementById('spinner');
+  const errorMsg   = document.getElementById('errorMsg');
+  const result     = document.getElementById('result');
+  const previewImg = document.getElementById('previewImg');
+  const predInfo   = document.getElementById('predInfo');
+  const gradcamImg = document.getElementById('gradcamImg');
+  const origSmall  = document.getElementById('origSmall');
+  const gradcamPanel = document.getElementById('gradcamPanel');
+  const btnGradcam = document.getElementById('btnGradcam');
+  const gradcamBtnText = document.getElementById('gradcamBtnText');
+
+  let gradcamAvailable = false;
+
+  // Drag & drop
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault(); dropZone.classList.remove('over');
+    const f = e.dataTransfer.files[0];
+    if (f && f.type.startsWith('image/')) sendFile(f);
+  });
+  dropZone.addEventListener('click', e => { if (e.target.tagName !== 'BUTTON') fileInput.click(); });
+  fileInput.addEventListener('change', () => { if (fileInput.files[0]) sendFile(fileInput.files[0]); });
+
+  async function sendFile(file) {
+    errorMsg.classList.remove('on');
+    result.classList.remove('on');
+    gradcamPanel.classList.remove('on');
+    btnGradcam.classList.remove('open');
+    spinner.classList.add('on');
+    setDropDisabled(true);
+
+    const form = new FormData();
+    form.append('file', file);
+
+    try {
+      const resp = await fetch('/predict', { method: 'POST', body: form });
+      const data = await resp.json();
+      if (data.error) { showError(data.error); return; }
+      showResult(data);
+    } catch {
+      showError('Erreur de connexion au serveur.');
+    } finally {
+      spinner.classList.remove('on');
+      setDropDisabled(false);
+    }
+  }
+
+  function showResult(data) {
+    const cls = data.is_fire ? 'fire' : 'safe';
+    const icon = data.is_fire ? '&#128293;' : '&#10003;';
+    const label = data.is_fire ? 'FEU DETECTE' : 'AUCUN FEU';
+
+    // Image
+    previewImg.src = data.image_data;
+    origSmall.src  = data.image_data;
+
+    // Prediction info
+    predInfo.innerHTML = `
+      <div class="badge ${cls}">${icon} ${label}</div>
+      <div>
+        <div class="conf-label">Confiance</div>
+        <div class="conf-value ${cls}">${data.confidence}&thinsp;%</div>
+      </div>
+      <div>
+        <div class="bar-track"><div class="bar-fill ${cls}" id="bar"></div></div>
+      </div>
+      <div class="detail">Score sigmoid brut : ${data.raw_score}&thinsp;%</div>
+    `;
+
+    // Grad-CAM
+    gradcamAvailable = !!data.gradcam_data;
+    if (gradcamAvailable) {
+      gradcamImg.src = data.gradcam_data;
+      btnGradcam.style.display = 'flex';
+    } else {
+      btnGradcam.style.display = 'none';
+    }
+
+    result.classList.add('on');
+
+    // Animer la barre
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const bar = document.getElementById('bar');
+      if (bar) bar.style.width = data.confidence + '%';
+    }));
+  }
+
+  function toggleGradcam() {
+    if (!gradcamAvailable) return;
+    const open = gradcamPanel.classList.toggle('on');
+    btnGradcam.classList.toggle('open', open);
+    gradcamBtnText.textContent = open ? 'Masquer Grad-CAM' : 'Afficher Grad-CAM';
+  }
+
+  function showError(msg) {
+    errorMsg.textContent = msg;
+    errorMsg.classList.add('on');
+  }
+
+  function resetUI() {
+    result.classList.remove('on');
+    errorMsg.classList.remove('on');
+    gradcamPanel.classList.remove('on');
+    btnGradcam.classList.remove('open');
+    fileInput.value = '';
+    gradcamAvailable = false;
+  }
+
+  function setDropDisabled(off) {
+    dropZone.style.opacity = off ? '0.5' : '1';
+    dropZone.style.pointerEvents = off ? 'none' : 'auto';
+  }
+</script>
+
+</body>
+</html>

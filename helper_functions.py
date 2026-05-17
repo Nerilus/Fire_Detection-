@@ -20,7 +20,7 @@ def load_and_prep_image(filename, img_shape=224, scale=True):
         scale (bool): normaliser les pixels entre 0 et 1, default True
     """
     img = tf.io.read_file(filename)
-    img = tf.image.decode_jpeg(img)
+    img = tf.io.decode_image(img, channels=3, expand_animations=False)
     img = tf.image.resize(img, [img_shape, img_shape])
     if scale:
         return img / 255.
